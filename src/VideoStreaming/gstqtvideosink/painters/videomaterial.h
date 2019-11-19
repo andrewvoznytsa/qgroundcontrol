@@ -51,7 +51,7 @@ protected:
     VideoMaterial();
     void initRgbTextureInfo(GLenum internalFormat, GLuint format,
                             GLenum type, const QSize &size);
-    void initYuv420PTextureInfo(bool uvSwapped, const QSize &size);
+    void initYuv420PTextureInfo(const GstVideoInfo& videoInfo);
     void init(GstVideoColorMatrix colorMatrixType);
 
 private:

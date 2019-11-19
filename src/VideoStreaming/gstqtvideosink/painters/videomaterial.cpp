@@ -228,9 +228,7 @@ VideoMaterial *VideoMaterial::create(const BufferFormat & format)
     case GST_VIDEO_FORMAT_I420:
     case GST_VIDEO_FORMAT_YV12:
         material = new VideoMaterialImpl<qtvideosink_glsl_yuvPlanarFragmentShader>;
-        material->initYuv420PTextureInfo(
-            (format.videoFormat() == GST_VIDEO_FORMAT_YV12) /* uvSwapped */,
-            format.frameSize());
+        material->initYuv420PTextureInfo(format.videoInfo());
         break;
 
     default:
@@ -305,27 +303,21 @@ void VideoMaterial::initRgbTextureInfo(
     m_textureOffsets[0] = 0;
 }
 
-void VideoMaterial::initYuv420PTextureInfo(bool uvSwapped, const QSize &size)
+void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo/*bool uvSwapped, const QSize &size*/)
 {
-    int bytesPerLine = (size.width() + 3) & ~3;
-    int bytesPerLine2 = (size.width() / 2 + 3) & ~3;
-
     m_textureInternalFormat = GL_LUMINANCE;
     m_textureFormat = GL_LUMINANCE;
     m_textureType = GL_UNSIGNED_BYTE;
     m_textureCount = 3;
-    m_textureWidths[0] = bytesPerLine;
-    m_textureHeights[0] = size.height();
-    m_textureOffsets[0] = 0;
-    m_textureWidths[1] = bytesPerLine2;
-    m_textureHeights[1] = size.height() / 2;
-    m_textureOffsets[1] = bytesPerLine * size.height();
-    m_textureWidths[2] = bytesPerLine2;
-    m_textureHeights[2] = size.height() / 2;
-    m_textureOffsets[2] = bytesPerLine * size.height() + bytesPerLine2 * size.height()/2;
-
-    if (uvSwapped)
-      qSwap (m_textureOffsets[1], m_textureOffsets[2]);
+    m_textureWidths[0] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, 0);
+    m_textureHeights[0] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 0);
+    m_textureOffsets[0] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, 0);
+    m_textureWidths[1] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, 1);
+    m_textureHeights[1] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 1);
+    m_textureOffsets[1] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, 1);
+    m_textureWidths[2] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, 2);
+    m_textureHeights[2] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 2);
+    m_textureOffsets[2] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, 2);
 }
 
 void VideoMaterial::init(GstVideoColorMatrix colorMatrixType)
