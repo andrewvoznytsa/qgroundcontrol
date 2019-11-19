@@ -436,6 +436,19 @@ void VideoMaterial::bind()
     if (frame) {
         GstMapInfo info;
         gst_buffer_map(frame, &info, GST_MAP_READ);
+
+        static int lastKnownBufferSizeDiff = -1;
+
+        const int expectedBufferSize = m_textureOffsets[2] + m_textureWidths[2] * m_textureHeights[2];
+
+        const int bufferSizeDiff = expectedBufferSize - (int)info.size;
+
+        if (lastKnownBufferSizeDiff != bufferSizeDiff) {
+            qDebug() << "frame buffer size is " << info.size;
+            qDebug() << "expected frame buffer size is " << expectedBufferSize;
+            lastKnownBufferSizeDiff = bufferSizeDiff;
+        }
+
         funcs->glActiveTexture(GL_TEXTURE1);
         bindTexture(1, info.data);
         funcs->glActiveTexture(GL_TEXTURE2);
