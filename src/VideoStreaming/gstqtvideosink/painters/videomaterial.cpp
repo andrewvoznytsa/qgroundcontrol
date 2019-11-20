@@ -317,28 +317,6 @@ void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo)
     const unsigned cbPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 1);
     const unsigned crPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 2);
 
-#if 1
-    const int codedWidth = (videoInfo.width + 0xF) & ~0xF;
-    const int codedHeight = (videoInfo.height + 0xF) & ~0xF;
-
-    m_textureWidths[0] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 0);
-    m_textureHeights[0] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 0);
-    m_textureOffsets[0] = 0;
-    m_textureStrides[0] = codedWidth;
-    m_textureAllocated[0] = false;
-
-    m_textureWidths[1] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 1);
-    m_textureHeights[1] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 1);
-    m_textureOffsets[1] = codedWidth * codedHeight + (codedWidth * codedHeight) / 4 * (cbPlane - 1);
-    m_textureStrides[1] = codedWidth / 2;
-    m_textureAllocated[1] = false;
-
-    m_textureWidths[2] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 2);
-    m_textureHeights[2] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 2);
-    m_textureOffsets[2] = codedWidth * codedHeight + (codedWidth * codedHeight) / 4 * (crPlane - 1);
-    m_textureStrides[2] = codedWidth / 2;
-    m_textureAllocated[2] = false;
-#else
     m_textureWidths[0] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 0);
     m_textureHeights[0] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 0);
     m_textureOffsets[0] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, lumaPlane);
@@ -356,36 +334,6 @@ void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo)
     m_textureOffsets[2] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, crPlane);
     m_textureStrides[2] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, crPlane);
     m_textureAllocated[2] = false;
-#endif
-
-    qDebug() << "i.width " << videoInfo.width;
-    qDebug() << "i.height " << videoInfo.height;
-    qDebug() << "i.offset[0] " << videoInfo.offset[0];
-    qDebug() << "i.offset[1] " << videoInfo.offset[1];
-    qDebug() << "i.offset[2] " << videoInfo.offset[2];
-    qDebug() << "i.finfo->n_planes " << videoInfo.finfo->n_planes;
-    qDebug() << "i.finfo->plane[0]" << videoInfo.finfo->plane[0];
-    qDebug() << "i.finfo->plane[1]" << videoInfo.finfo->plane[1];
-    qDebug() << "i.finfo->plane[2]" << videoInfo.finfo->plane[2];
-    qDebug() << "i.finfo->poffset[0]" << videoInfo.finfo->poffset[0];
-    qDebug() << "i.finfo->poffset[1]" << videoInfo.finfo->poffset[1];
-    qDebug() << "i.finfo->poffset[2]" << videoInfo.finfo->poffset[2];
-
-    qDebug() << "m_textureWidths[0] " << m_textureWidths[0];
-    qDebug() << "m_textureWidths[1] " << m_textureWidths[1];
-    qDebug() << "m_textureWidths[2] " << m_textureWidths[2];
-
-    qDebug() << "m_textureHeights[0] " << m_textureHeights[0];
-    qDebug() << "m_textureHeights[1] " << m_textureHeights[1];
-    qDebug() << "m_textureHeights[2] " << m_textureHeights[2];
-
-    qDebug() << "m_textureOffsets[0] " << m_textureOffsets[0];
-    qDebug() << "m_textureOffsets[1] " << m_textureOffsets[1];
-    qDebug() << "m_textureOffsets[2] " << m_textureOffsets[2];
-
-    qDebug() << "m_textureStrides[0] " << m_textureStrides[0];
-    qDebug() << "m_textureStrides[1] " << m_textureStrides[1];
-    qDebug() << "m_textureStrides[2] " << m_textureStrides[2];
 }
 
 void VideoMaterial::init(GstVideoColorMatrix colorMatrixType)
