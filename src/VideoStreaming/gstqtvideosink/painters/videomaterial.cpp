@@ -254,14 +254,14 @@ VideoMaterial::VideoMaterial()
 
 VideoMaterial::~VideoMaterial()
 {
-    if (!m_textureSize.isEmpty())
-    {
+    if (m_textureCount > 0) {
         QOpenGLFunctionsDef *funcs = getQOpenGLFunctions();
-        if (funcs)
-        {
+
+        if (funcs) {
             funcs->glDeleteTextures(m_textureCount, m_textureIds);
         }
     }
+
     gst_buffer_replace(&m_frame, nullptr);
 }
 
@@ -301,23 +301,62 @@ void VideoMaterial::initRgbTextureInfo(
     m_textureWidths[0] = size.width();
     m_textureHeights[0] = size.height();
     m_textureOffsets[0] = 0;
+    // FIXME: we should use real stride here
+    m_textureStrides[0] = size.width();
+    m_textureAllocated[0] = false;
 }
 
-void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo/*bool uvSwapped, const QSize &size*/)
+void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo)
 {
     m_textureInternalFormat = GL_LUMINANCE;
     m_textureFormat = GL_LUMINANCE;
     m_textureType = GL_UNSIGNED_BYTE;
     m_textureCount = 3;
-    m_textureWidths[0] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, 0);
+
+    const unsigned lumaPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 0);
+    const unsigned cbPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 1);
+    const unsigned crPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 2);
+
+#if 1
+    const int codedWidth = (videoInfo.width + 0xF) & ~0xF;
+    const int codedHeight = (videoInfo.height + 0xF) & ~0xF;
+
+    m_textureWidths[0] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 0);
     m_textureHeights[0] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 0);
-    m_textureOffsets[0] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, 0);
-    m_textureWidths[1] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, 1);
+    m_textureOffsets[0] = 0;
+    m_textureStrides[0] = codedWidth;
+    m_textureAllocated[0] = false;
+
+    m_textureWidths[1] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 1);
     m_textureHeights[1] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 1);
-    m_textureOffsets[1] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, 1);
-    m_textureWidths[2] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, 2);
+    m_textureOffsets[1] = codedWidth * codedHeight + (codedWidth * codedHeight) / 4 * (cbPlane - 1);
+    m_textureStrides[1] = codedWidth / 2;
+    m_textureAllocated[1] = false;
+
+    m_textureWidths[2] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 2);
     m_textureHeights[2] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 2);
-    m_textureOffsets[2] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, 2);
+    m_textureOffsets[2] = codedWidth * codedHeight + (codedWidth * codedHeight) / 4 * (crPlane - 1);
+    m_textureStrides[2] = codedWidth / 2;
+    m_textureAllocated[2] = false;
+#else
+    m_textureWidths[0] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 0);
+    m_textureHeights[0] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 0);
+    m_textureOffsets[0] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, lumaPlane);
+    m_textureStrides[0] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, lumaPlane);
+    m_textureAllocated[0] = false;
+
+    m_textureWidths[1] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 1);
+    m_textureHeights[1] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 1);
+    m_textureOffsets[1] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, cbPlane);
+    m_textureStrides[1] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, cbPlane);
+    m_textureAllocated[1] = false;
+
+    m_textureWidths[2] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 2);
+    m_textureHeights[2] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 2);
+    m_textureOffsets[2] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, crPlane);
+    m_textureStrides[2] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, crPlane);
+    m_textureAllocated[2] = false;
+#endif
 
     qDebug() << "i.width " << videoInfo.width;
     qDebug() << "i.height " << videoInfo.height;
@@ -343,6 +382,10 @@ void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo/*bool u
     qDebug() << "m_textureOffsets[0] " << m_textureOffsets[0];
     qDebug() << "m_textureOffsets[1] " << m_textureOffsets[1];
     qDebug() << "m_textureOffsets[2] " << m_textureOffsets[2];
+
+    qDebug() << "m_textureStrides[0] " << m_textureStrides[0];
+    qDebug() << "m_textureStrides[1] " << m_textureStrides[1];
+    qDebug() << "m_textureStrides[2] " << m_textureStrides[2];
 }
 
 void VideoMaterial::init(GstVideoColorMatrix colorMatrixType)
@@ -491,16 +534,52 @@ void VideoMaterial::bindTexture(int i, const quint8 *data)
         return;
 
     funcs->glBindTexture(GL_TEXTURE_2D, m_textureIds[i]);
-    funcs->glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        m_textureInternalFormat,
-        m_textureWidths[i],
-        m_textureHeights[i],
-        0,
-        m_textureFormat,
-        m_textureType,
-        data + m_textureOffsets[i]);
+
+    if (!m_textureAllocated[i]) {
+        funcs->glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            m_textureInternalFormat,
+            m_textureWidths[i],
+            m_textureHeights[i],
+            0,
+            m_textureFormat,
+            m_textureType,
+            NULL);
+
+        m_textureAllocated[i] = true;
+    }
+
+    if (m_textureStrides[i] != m_textureWidths[i]) {
+        const unsigned char* line = data + m_textureOffsets[i];
+
+        for (int j = 0; j < m_textureHeights[i]; j++) {
+            funcs->glTexSubImage2D(
+                        GL_TEXTURE_2D,
+                        0,
+                        0,
+                        j,
+                        m_textureWidths[i],
+                        1,
+                        m_textureFormat,
+                        m_textureType,
+                        line);
+
+            line += m_textureStrides[i];
+        }
+    } else {
+        funcs->glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            m_textureInternalFormat,
+            m_textureWidths[i],
+            m_textureHeights[i],
+            0,
+            m_textureFormat,
+            m_textureType,
+            data + m_textureOffsets[i]);
+    }
+
     funcs->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     funcs->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     funcs->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
