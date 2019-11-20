@@ -249,6 +249,23 @@ gst_qt_quick2_video_sink_set_caps(GstBaseSink *sink, GstCaps *caps)
     }
 }
 
+static gboolean
+gst_qt_quick2_video_sink_propose_allocation(GstBaseSink *sink, GstQuery *query)
+{
+    GstCaps *caps;
+
+    gst_query_parse_allocation (query, &caps, NULL);
+
+    GstVideoInfo info;
+
+    if (gst_video_info_from_caps (&info, caps) != TRUE) {
+        return FALSE;
+    }
+
+    return gst_qt_quick2_video_sink_set_caps(sink, caps);
+}
+
+
 static GstFlowReturn
 gst_qt_quick2_video_sink_show_frame(GstVideoSink *sink, GstBuffer *buffer)
 {
@@ -351,6 +368,7 @@ gst_qt_quick2_video_sink_class_init (GstQtQuick2VideoSinkClass *klass)
 
     GstBaseSinkClass *base_sink_class = GST_BASE_SINK_CLASS(klass);
     base_sink_class->set_caps = gst_qt_quick2_video_sink_set_caps;
+    base_sink_class->propose_allocation = gst_qt_quick2_video_sink_propose_allocation;
 
     GstVideoSinkClass *video_sink_class = GST_VIDEO_SINK_CLASS(klass);
     video_sink_class->show_frame = gst_qt_quick2_video_sink_show_frame;
