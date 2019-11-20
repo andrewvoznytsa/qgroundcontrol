@@ -198,11 +198,11 @@ VideoMaterial *VideoMaterial::create(const BufferFormat & format)
     case GST_VIDEO_FORMAT_BGRx:
     case GST_VIDEO_FORMAT_BGRA:
         material = new VideoMaterialImpl<qtvideosink_glsl_bgrxFragmentShader>;
-        material->initRgbTextureInfo(GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, format.frameSize());
+        material->initRgbTextureInfo(GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, format.videoInfo());
         break;
     case GST_VIDEO_FORMAT_BGR:
         material = new VideoMaterialImpl<qtvideosink_glsl_bgrxFragmentShader>;
-        material->initRgbTextureInfo(GL_RGB, GL_RGB, GL_UNSIGNED_BYTE, format.frameSize());
+        material->initRgbTextureInfo(GL_RGB, GL_RGB, GL_UNSIGNED_BYTE, format.videoInfo());
         break;
 
     // xRGB
@@ -210,18 +210,18 @@ VideoMaterial *VideoMaterial::create(const BufferFormat & format)
     case GST_VIDEO_FORMAT_ARGB:
     case GST_VIDEO_FORMAT_AYUV:
         material = new VideoMaterialImpl<qtvideosink_glsl_xrgbFragmentShader>;
-        material->initRgbTextureInfo(GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, format.frameSize());
+        material->initRgbTextureInfo(GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, format.videoInfo());
         break;
 
     // RGBx
     case GST_VIDEO_FORMAT_RGB:
     case GST_VIDEO_FORMAT_v308:
         material = new VideoMaterialImpl<qtvideosink_glsl_rgbxFragmentShader>;
-        material->initRgbTextureInfo(GL_RGB, GL_RGB, GL_UNSIGNED_BYTE, format.frameSize());
+        material->initRgbTextureInfo(GL_RGB, GL_RGB, GL_UNSIGNED_BYTE, format.videoInfo());
         break;
     case GST_VIDEO_FORMAT_RGB16:
         material = new VideoMaterialImpl<qtvideosink_glsl_rgbxFragmentShader>;
-        material->initRgbTextureInfo(GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, format.frameSize());
+        material->initRgbTextureInfo(GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, format.videoInfo());
         break;
 
     // YUV 420 planar
@@ -278,7 +278,7 @@ int VideoMaterial::compare(const QSGMaterial *other) const
 }
 
 void VideoMaterial::initRgbTextureInfo(
-        GLenum internalFormat, GLuint format, GLenum type, const QSize &size)
+        GLenum internalFormat, GLuint format, GLenum type, const GstVideoInfo& videoInfo)
 {
 #ifndef QT_OPENGL_ES
     //make sure we get 8 bits per component, at least on the desktop GL where we can
@@ -298,11 +298,11 @@ void VideoMaterial::initRgbTextureInfo(
     m_textureFormat = format;
     m_textureType = type;
     m_textureCount = 1;
-    m_textureWidths[0] = size.width();
-    m_textureHeights[0] = size.height();
-    m_textureOffsets[0] = 0;
-    // FIXME: we should use real stride here
-    m_textureStrides[0] = size.width();
+
+    m_textureWidths[0] = videoInfo.width;
+    m_textureHeights[0] = videoInfo.height;
+    m_textureOffsets[0] = videoInfo.offset[0];
+    m_textureStrides[0] = videoInfo.stride[0];
     m_textureAllocated[0] = false;
 }
 
