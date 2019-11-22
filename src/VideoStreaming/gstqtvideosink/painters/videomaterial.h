@@ -52,12 +52,14 @@ protected:
     void initRgbTextureInfo(GLenum internalFormat, GLuint format,
                             GLenum type, const GstVideoInfo& videoInfo);
     void initYuv420PTextureInfo(const GstVideoInfo& videoInfo);
+    void updateYuv420PTextureInfo(const GstVideoInfo& videoInfo);
     void init(GstVideoColorMatrix colorMatrixType);
 
 private:
     void bindTexture(int i, const quint8 *data);
 
-
+    GstVideoInfo m_videoInfo;
+    GstBufferPool* m_bufferPool;
     GstBuffer *m_frame;
     QMutex m_frameMutex;
 

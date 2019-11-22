@@ -241,7 +241,8 @@ VideoMaterial *VideoMaterial::create(const BufferFormat & format)
 }
 
 VideoMaterial::VideoMaterial()
-    : m_frame(0)
+    : m_bufferPool(0)
+    , m_frame(0)
     , m_textureCount(0)
     , m_textureFormat(0)
     , m_textureInternalFormat(0)
@@ -294,6 +295,8 @@ void VideoMaterial::initRgbTextureInfo(
     }
 #endif
 
+    m_videoInfo = videoInfo;
+
     m_textureInternalFormat = internalFormat;
     m_textureFormat = format;
     m_textureType = type;
@@ -308,32 +311,45 @@ void VideoMaterial::initRgbTextureInfo(
 
 void VideoMaterial::initYuv420PTextureInfo(const GstVideoInfo& videoInfo)
 {
+    m_videoInfo = videoInfo;
+
     m_textureInternalFormat = GL_LUMINANCE;
     m_textureFormat = GL_LUMINANCE;
     m_textureType = GL_UNSIGNED_BYTE;
     m_textureCount = 3;
 
-    const unsigned lumaPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 0);
-    const unsigned cbPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 1);
-    const unsigned crPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 2);
-
     m_textureWidths[0] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 0);
     m_textureHeights[0] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 0);
-    m_textureOffsets[0] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, lumaPlane);
-    m_textureStrides[0] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, lumaPlane);
     m_textureAllocated[0] = false;
 
     m_textureWidths[1] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 1);
     m_textureHeights[1] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 1);
-    m_textureOffsets[1] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, cbPlane);
-    m_textureStrides[1] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, cbPlane);
     m_textureAllocated[1] = false;
 
     m_textureWidths[2] = GST_VIDEO_INFO_COMP_WIDTH(&videoInfo, 2);
     m_textureHeights[2] = GST_VIDEO_INFO_COMP_HEIGHT(&videoInfo, 2);
+    m_textureAllocated[2] = false;
+
+    updateYuv420PTextureInfo(videoInfo);
+}
+
+void VideoMaterial::updateYuv420PTextureInfo(const GstVideoInfo& videoInfo)
+{
+    const unsigned lumaPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 0);
+
+    m_textureOffsets[0] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, lumaPlane);
+    m_textureStrides[0] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, lumaPlane);
+
+    const unsigned cbPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 1);
+
+    m_textureOffsets[1] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, cbPlane);
+    m_textureStrides[1] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, cbPlane);
+
+    const unsigned crPlane = GST_VIDEO_INFO_COMP_PLANE(&videoInfo, 2);
+
     m_textureOffsets[2] = GST_VIDEO_INFO_PLANE_OFFSET(&videoInfo, crPlane);
     m_textureStrides[2] = GST_VIDEO_INFO_PLANE_STRIDE(&videoInfo, crPlane);
-    m_textureAllocated[2] = false;
+
 }
 
 void VideoMaterial::init(GstVideoColorMatrix colorMatrixType)
@@ -444,6 +460,27 @@ void VideoMaterial::bind()
     if (frame) {
         GstMapInfo info;
         gst_buffer_map(frame, &info, GST_MAP_READ);
+
+        if (m_bufferPool != frame->pool) {
+            GstStructure* structure = gst_buffer_pool_get_config(frame->pool);
+
+            if (structure != NULL) {
+                GstCaps* caps;
+
+                if(gst_buffer_pool_config_get_params(structure, &caps, NULL, NULL, NULL) != FALSE) {
+                    updateYuv420PTextureInfo(BufferFormat::fromCaps(caps).videoInfo());
+                } else {
+                    updateYuv420PTextureInfo(m_videoInfo);
+                }
+
+                gst_structure_free(structure);
+                structure = NULL;
+            } else {
+                updateYuv420PTextureInfo(m_videoInfo);
+            }
+
+            m_bufferPool = frame->pool;
+        }
 
         funcs->glActiveTexture(GL_TEXTURE1);
         bindTexture(1, info.data);
