@@ -107,7 +107,7 @@ public:
     /// Allows the plugin to override the creation of VideoManager.
     virtual VideoManager* createVideoManager(QGCApplication* app, QGCToolbox* toolbox);
     /// Allows the plugin to override the creation of VideoReceiver.
-    virtual VideoReceiver* createVideoReceiver(QObject* parent);
+    virtual VideoReceiver* createVideoReceiver(QObject* parent, const QString& videoNode);
 
     /// Allows the plugin to see all mavlink traffic to a vehicle
     /// @return true: Allow vehicle to continue processing, false: Vehicle should not process message

@@ -20,7 +20,5 @@ import org.freedesktop.gstreamer.GLVideoItem    1.0
 
 GstGLVideoItem {
     id: videoBackground
-    property var display
     property var receiver
-    //surface: display
 }

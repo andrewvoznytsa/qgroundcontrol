@@ -47,7 +47,7 @@ public:
     Q_PROPERTY(QString          videoFile           READ    videoFile           NOTIFY  videoFileChanged)
     Q_PROPERTY(bool             showFullScreen      READ    showFullScreen      WRITE   setShowFullScreen     NOTIFY showFullScreenChanged)
 
-    explicit VideoReceiver(QObject* parent = nullptr);
+    explicit VideoReceiver(QObject* parent, const QString& videoNode);
     ~VideoReceiver();
 
 #if defined(QGC_GST_STREAMING)
@@ -124,11 +124,9 @@ protected:
     virtual void                _shutdownRecordingBranch();
     virtual void                _shutdownPipeline       ();
     virtual void                _cleanupOldVideos       ();
-    virtual void                _setVideoSink           (GstElement* sink);
 
     GstElement*     _pipeline;
     GstElement*     _pipelineStopRec;
-    GstElement*     _videoSink;
 
     //-- Wait for Video Server to show up before starting
     QTimer          _frameTimer;
@@ -150,5 +148,6 @@ protected:
     bool            _tryWithHardwareDecoding = true;
     const char*     _hwDecoderName;
     const char*     _swDecoderName;
+    QString         _videoNodeName;
 };
 

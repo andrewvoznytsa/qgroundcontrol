@@ -422,9 +422,9 @@ VideoManager* QGCCorePlugin::createVideoManager(QGCApplication *app, QGCToolbox 
     return new VideoManager(app, toolbox);
 }
 
-VideoReceiver* QGCCorePlugin::createVideoReceiver(QObject* parent)
+VideoReceiver* QGCCorePlugin::createVideoReceiver(QObject* parent, const QString& videoNode)
 {
-    return new VideoReceiver(parent);
+    return new VideoReceiver(parent, videoNode);
 }
 
 bool QGCCorePlugin::guidedActionsControllerLogging() const

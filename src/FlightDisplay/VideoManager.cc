@@ -73,8 +73,8 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
 
     emit isGStreamerChanged();
     qCDebug(VideoManagerLog) << "New Video Source:" << videoSource;
-    _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
-    _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
+    _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this, "videoContent");
+    _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this, "thermalVideo");
     _updateSettings();
     if(isGStreamer()) {
         startVideo();
