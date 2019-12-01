@@ -909,44 +909,45 @@ void
 VideoReceiver::_updateTimer()
 {
 #if defined(QGC_GST_STREAMING)
-// FIXME: AV: sounds like I need part of this logic
-//    if(_videoSurface) {
-//        if(_stopping || _starting) {
-//            return;
+    if(_stopping || _starting) {
+        return;
+    }
+
+    if(_streaming) {
+        if(!_videoRunning) {
+            _videoRunning = true;
+            emit videoRunningChanged();
+        }
+    } else {
+        if(_videoRunning) {
+            _videoRunning = false;
+            emit videoRunningChanged();
+        }
+    }
+
+    if(_videoRunning) {
+        uint32_t timeout = 1;
+        if(qgcApp()->toolbox() && qgcApp()->toolbox()->settingsManager()) {
+            timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
+        }
+// FIXME: AV: need to add new watchdog mechanism
+//        time_t elapsed = 0;
+//        time_t lastFrame = _videoSurface->lastFrame();
+
+//        if(lastFrame != 0) {
+//            elapsed = time(nullptr) - _videoSurface->lastFrame();
 //        }
-//        if(_streaming) {
-//            if(!_videoRunning) {
-//                _videoSurface->setLastFrame(0);
-//                _videoRunning = true;
-//                emit videoRunningChanged();
-//            }
-//        } else {
-//            if(_videoRunning) {
-//                _videoRunning = false;
-//                emit videoRunningChanged();
-//            }
+
+//        if(elapsed > static_cast<time_t>(timeout) && _videoSurface) {
+//            stop();
+//            // We want to start it back again with _updateTimer
+//            _stop = false;
 //        }
-//        if(_videoRunning) {
-//            uint32_t timeout = 1;
-//            if(qgcApp()->toolbox() && qgcApp()->toolbox()->settingsManager()) {
-//                timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
-//            }
-//            time_t elapsed = 0;
-//            time_t lastFrame = _videoSurface->lastFrame();
-//            if(lastFrame != 0) {
-//                elapsed = time(nullptr) - _videoSurface->lastFrame();
-//            }
-//            if(elapsed > static_cast<time_t>(timeout) && _videoSurface) {
-//                stop();
-//                // We want to start it back again with _updateTimer
-//                _stop = false;
-//            }
-//        } else {
-//            if(!_stop && _running && !_uri.isEmpty() && _videoSettings->streamEnabled()->rawValue().toBool()) {
-//                start();
-//            }
-//        }
-//    }
+    } else {
+        if(!_stop && !_running && !_uri.isEmpty() && _videoSettings->streamEnabled()->rawValue().toBool()) {
+            start();
+        }
+    }
 #endif
 }
 

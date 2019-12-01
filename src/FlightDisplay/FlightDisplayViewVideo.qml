@@ -40,7 +40,7 @@ Item {
         id:             noVideo
         anchors.fill:   parent
         color:          Qt.rgba(0,0,0,0.75)
-        visible:        false //!(_videoReceiver && _videoReceiver.videoRunning)
+        visible:        !(_videoReceiver && _videoReceiver.videoRunning)
         QGCLabel {
             text:               QGroundControl.settingsManager.videoSettings.streamEnabled.rawValue ? qsTr("WAITING FOR VIDEO") : qsTr("VIDEO DISABLED")
             font.family:        ScreenTools.demiboldFontFamily
@@ -58,7 +58,7 @@ Item {
     Rectangle {
         anchors.fill:   parent
         color:          "black"
-        visible:        true //_videoReceiver && _videoReceiver.videoRunning
+        visible:        _videoReceiver && _videoReceiver.videoRunning
         function getWidth() {
             //-- Fit Width or Stretch
             if(_fitMode === 0 || _fitMode === 2) {
@@ -81,7 +81,6 @@ Item {
                 id:             videoContent
                 objectName:     "videoContent"
                 receiver:       _videoReceiver
-                //display:        _videoReceiver && _videoReceiver.videoSurface
 
                 Connections {
                     target:         _videoReceiver
@@ -131,7 +130,7 @@ Item {
             height:             parent.getHeight()
             width:              parent.getWidth()
             anchors.centerIn:   parent
-            visible:            true//_videoReceiver && _videoReceiver.videoRunning
+            visible:            _videoReceiver && _videoReceiver.videoRunning
             sourceComponent:    videoDisabled ? null : videoBackgroundComponent
 
             property bool videoDisabled: QGroundControl.settingsManager.videoSettings.videoSource.rawValue === QGroundControl.settingsManager.videoSettings.disabledVideoSource
@@ -173,7 +172,6 @@ Item {
                 objectName:     "thermalVideo"
                 anchors.fill:   parent
                 receiver:       QGroundControl.videoManager.thermalVideoReceiver
-                //display:        QGroundControl.videoManager.thermalVideoReceiver ? QGroundControl.videoManager.thermalVideoReceiver.videoSurface : null
                 opacity:        _camera ? (_camera.thermalMode === QGCCameraControl.THERMAL_BLEND ? _camera.thermalOpacity / 100 : 1.0) : 0
             }
         }
