@@ -107,6 +107,9 @@ protected:
         gboolean        removing;
     } Sink;
 
+    friend class SetReady;
+
+    bool                _engineReady;
     bool                _running;
     bool                _recording;
     bool                _streaming;
@@ -127,6 +130,9 @@ protected:
 
     GstElement*     _pipeline;
     GstElement*     _pipelineStopRec;
+    GstElement*     _videoSink;
+    guint64         _lastFrameId;
+    time_t          _lastFrameTime;
 
     //-- Wait for Video Server to show up before starting
     QTimer          _frameTimer;

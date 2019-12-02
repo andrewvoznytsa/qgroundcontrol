@@ -26,6 +26,7 @@
 #include <QDir>
 #include <QDateTime>
 #include <QSysInfo>
+#include <QQuickWindow>
 
 QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 
@@ -47,12 +48,28 @@ static const char* kVideoMuxes[] =
 
 #define NUM_MUXES (sizeof(kVideoMuxes) / sizeof(char*))
 
+class SetReady : public QRunnable
+{
+public:
+  SetReady(VideoReceiver* receiver)
+      : _receiver(receiver)
+  {}
+
+  void run () {
+      _receiver->_engineReady = true;
+  }
+
+private:
+  VideoReceiver* _receiver;
+};
+
 #endif
 
 
 VideoReceiver::VideoReceiver(QObject* parent, const QString& videoNode)
     : QObject(parent)
 #if defined(QGC_GST_STREAMING)
+    , _engineReady(false)
     , _running(false)
     , _recording(false)
     , _streaming(false)
@@ -63,6 +80,9 @@ VideoReceiver::VideoReceiver(QObject* parent, const QString& videoNode)
     , _tee(nullptr)
     , _pipeline(nullptr)
     , _pipelineStopRec(nullptr)
+    , _videoSink(nullptr)
+    , _lastFrameId(G_MAXUINT64)
+    , _lastFrameTime(0)
     , _restart_time_ms(1389)
     , _udpReconnect_us(5000000)
 #endif
@@ -154,6 +174,19 @@ VideoReceiver::start()
 #if defined(QGC_GST_STREAMING)
     _stop = false;
 
+    // FIXME: AV: temporal workaround; I'd remove this ugly hack from VideoReceiver and make sure that top layer is calling start at 'right' moment
+    if (!_engineReady) {
+        QQuickWindow* rootObject = (QQuickWindow*)qgcApp()->mainRootWindow();
+
+        if (rootObject){
+            rootObject->scheduleRenderJob (new SetReady (this),
+                    QQuickWindow::BeforeSynchronizingStage);
+        }
+
+        qCDebug(VideoReceiverLog) << "start() but engine is not ready yet";
+        return;
+    }
+
 #if defined(QGC_GST_TAISYNC_ENABLED) && (defined(__android__) || defined(__ios__))
     //-- Taisync on iOS or Android sends a raw h.264 stream
     bool isTaisyncUSB = qgcApp()->toolbox()->videoManager()->isTaisync();
@@ -181,7 +214,9 @@ VideoReceiver::start()
 
     _starting = true;
 
-    bool running    = false;
+    _lastFrameId = G_MAXUINT64;
+    _lastFrameTime = 0;
+
     bool pipelineUp = false;
 
     GstElement*     dataSource      = nullptr;
@@ -367,8 +402,7 @@ VideoReceiver::start()
         }
 
         GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-paused");
-        running = gst_element_set_state(_pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE;
-
+        _running = gst_element_set_state(_pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE;
     } while(0);
 
     if (caps != nullptr) {
@@ -376,7 +410,7 @@ VideoReceiver::start()
         caps = nullptr;
     }
 
-    if (!running) {
+    if (!_running) {
         qCritical() << "VideoReceiver::start() failed";
 
         // In newer versions, the pipeline will clean up all references that are added to it
@@ -414,7 +448,7 @@ VideoReceiver::start()
 
             if (queue != nullptr) {
                 gst_object_unref(queue);
-                dataSource = nullptr;
+                queue = nullptr;
             }
 
             if (parser != nullptr) {
@@ -438,12 +472,10 @@ VideoReceiver::start()
             }
 
         }
-
-        _running = false;
     } else {
         GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-playing");
-        _running = true;
         qCDebug(VideoReceiverLog) << "Running";
+        _videoSink = qmlglsink;
     }
     _starting = false;
 #endif
@@ -501,6 +533,13 @@ VideoReceiver::_shutdownPipeline() {
         bus = nullptr;
     }
     gst_element_set_state(_pipeline, GST_STATE_NULL);
+
+    if (_videoSink) {
+        gst_bin_remove(GST_BIN(_pipeline), _videoSink);
+        gst_object_unref(_videoSink);
+        _videoSink = nullptr;
+    }
+
     gst_object_unref(_pipeline);
     _pipeline = nullptr;
     delete _sink;
@@ -930,19 +969,43 @@ VideoReceiver::_updateTimer()
         if(qgcApp()->toolbox() && qgcApp()->toolbox()->settingsManager()) {
             timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
         }
-// FIXME: AV: need to add new watchdog mechanism
-//        time_t elapsed = 0;
-//        time_t lastFrame = _videoSurface->lastFrame();
 
-//        if(lastFrame != 0) {
-//            elapsed = time(nullptr) - _videoSurface->lastFrame();
-//        }
+        guint64 frameId = _lastFrameId;
 
-//        if(elapsed > static_cast<time_t>(timeout) && _videoSurface) {
-//            stop();
-//            // We want to start it back again with _updateTimer
-//            _stop = false;
-//        }
+        if (_videoSink != nullptr) {
+            GstSample* s = nullptr;
+
+            g_object_get(_videoSink, "last-sample", &s, NULL);
+
+            if (s != nullptr) {
+                GstBuffer* b = gst_sample_get_buffer(s);
+
+                if (b != nullptr) {
+                    if (b->pts != GST_CLOCK_TIME_NONE) {
+                        frameId = b->pts;
+                    } else if (b->offset != G_MAXUINT64) {
+                        frameId = b->offset;
+                    } else {
+                        frameId = (guint64)b;
+                    }
+                    b = nullptr;
+                }
+
+                gst_sample_unref(s);
+                s = nullptr;
+            }
+        }
+
+        const time_t now = time(nullptr);
+
+        if(frameId == _lastFrameId && now - _lastFrameTime > timeout) {
+            stop();
+            // We want to start it back again with _updateTimer
+            _stop = false;
+        }
+
+        _lastFrameId = frameId;
+        _lastFrameTime = now;
     } else {
         if(!_stop && !_running && !_uri.isEmpty() && _videoSettings->streamEnabled()->rawValue().toBool()) {
             start();
