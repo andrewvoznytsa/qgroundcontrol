@@ -26,7 +26,6 @@
 #include <QDir>
 #include <QDateTime>
 #include <QSysInfo>
-#include <QQuickWindow>
 
 QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 
@@ -48,28 +47,12 @@ static const char* kVideoMuxes[] =
 
 #define NUM_MUXES (sizeof(kVideoMuxes) / sizeof(char*))
 
-class SetReady : public QRunnable
-{
-public:
-  SetReady(VideoReceiver* receiver)
-      : _receiver(receiver)
-  {}
-
-  void run () {
-      _receiver->_engineReady = true;
-  }
-
-private:
-  VideoReceiver* _receiver;
-};
-
 #endif
 
 
-VideoReceiver::VideoReceiver(QObject* parent, const QString& videoNode)
+VideoReceiver::VideoReceiver(QObject* parent)
     : QObject(parent)
 #if defined(QGC_GST_STREAMING)
-    , _engineReady(false)
     , _running(false)
     , _recording(false)
     , _streaming(false)
@@ -91,7 +74,6 @@ VideoReceiver::VideoReceiver(QObject* parent, const QString& videoNode)
     , _videoSettings(nullptr)
     , _hwDecoderName(nullptr)
     , _swDecoderName("avdec_h264")
-    , _videoNodeName(videoNode)
 {
     _videoSettings = qgcApp()->toolbox()->settingsManager()->videoSettings();
 #if defined(QGC_GST_STREAMING)
@@ -110,6 +92,7 @@ VideoReceiver::~VideoReceiver()
 {
 #if defined(QGC_GST_STREAMING)
     stop();
+    setVideoSink(nullptr);
 #endif
 }
 
@@ -174,19 +157,6 @@ VideoReceiver::start()
 #if defined(QGC_GST_STREAMING)
     _stop = false;
 
-    // FIXME: AV: temporal workaround; I'd remove this ugly hack from VideoReceiver and make sure that top layer is calling start at 'right' moment
-    if (!_engineReady) {
-        QQuickWindow* rootObject = (QQuickWindow*)qgcApp()->mainRootWindow();
-
-        if (rootObject){
-            rootObject->scheduleRenderJob (new SetReady (this),
-                    QQuickWindow::BeforeSynchronizingStage);
-        }
-
-        qCDebug(VideoReceiverLog) << "start() but engine is not ready yet";
-        return;
-    }
-
 #if defined(QGC_GST_TAISYNC_ENABLED) && (defined(__android__) || defined(__ios__))
     //-- Taisync on iOS or Android sends a raw h.264 stream
     bool isTaisyncUSB = qgcApp()->toolbox()->videoManager()->isTaisync();
@@ -204,6 +174,10 @@ VideoReceiver::start()
     }
     if(_running) {
         qCDebug(VideoReceiverLog) << "Already running!";
+        return;
+    }
+    if (!_videoSink) {
+        qCDebug(VideoReceiverLog) << "Video sink is not set!";
         return;
     }
     if (isUdp264) {
@@ -226,25 +200,8 @@ VideoReceiver::start()
     GstElement*     queue           = nullptr;
     GstElement*     decoder         = nullptr;
     GstElement*     queue1          = nullptr;
-    GstElement*     glupload        = nullptr;
-    GstElement*     glcolorconvert  = nullptr;
-    GstElement*     qmlglsink       = nullptr;
 
     do {
-        QQuickItem* rootObject = qgcApp()->mainRootWindow();
-
-        if (rootObject == NULL) {
-            qCritical() << "VideoReceiver::start() failed. No root window";
-            break;
-        }
-
-        QQuickItem* videoItem = rootObject->findChild<QQuickItem*>(_videoNodeName);
-
-        if (videoItem == NULL) {
-            qCritical() << "VideoReceiver::start() failed. Unable to find video node";
-            break;
-        }
-
         if ((_pipeline = gst_pipeline_new("receiver")) == nullptr) {
             qCritical() << "VideoReceiver::start() failed. Error with gst_pipeline_new()";
             break;
@@ -335,40 +292,23 @@ VideoReceiver::start()
             break;
         }
 
-        if ((glupload = gst_element_factory_make("glupload", nullptr)) == nullptr) {
-            qCritical() << "VideoReceiver::start() failed. Error with gst_element_factory_make('glupload')";
-            break;
-        }
-
-        if ((glcolorconvert = gst_element_factory_make("glcolorconvert", nullptr)) == nullptr) {
-            qCritical() << "VideoReceiver::start() failed. Error with gst_element_factory_make('glcolorconvert')";
-            break;
-        }
-
-        if ((qmlglsink = gst_element_factory_make("qmlglsink", nullptr)) == nullptr) {
-            qCritical() << "VideoReceiver::start() failed. Error with gst_element_factory_make('qmlglsink')";
-            break;
-        }
-
-        g_object_set(qmlglsink, "widget", videoItem, NULL);
-
         if(isTaisyncUSB) {
-            gst_bin_add_many(GST_BIN(_pipeline), dataSource, parser, _tee, queue, decoder, queue1, glupload, glcolorconvert, qmlglsink, nullptr);
+            gst_bin_add_many(GST_BIN(_pipeline), dataSource, parser, _tee, queue, decoder, queue1, _videoSink, nullptr);
         } else {
-            gst_bin_add_many(GST_BIN(_pipeline), dataSource, demux, parser, _tee, queue, decoder, queue1, glupload, glcolorconvert, qmlglsink, nullptr);
+            gst_bin_add_many(GST_BIN(_pipeline), dataSource, demux, parser, _tee, queue, decoder, queue1, _videoSink, nullptr);
         }
 
         pipelineUp = true;
 
         if(isUdp264 || isUdp265) {
             // Link the pipeline in front of the tee
-            if(!gst_element_link_many(dataSource, demux, parser, _tee, queue, decoder, queue1, glupload, glcolorconvert, qmlglsink, nullptr)) {
+            if(!gst_element_link_many(dataSource, demux, parser, _tee, queue, decoder, queue1, _videoSink, nullptr)) {
                 qCritical() << "Unable to link UDP elements.";
                 break;
             }
         } else if(isTaisyncUSB) {
             // Link the pipeline in front of the tee
-            if(!gst_element_link_many(dataSource, parser, _tee, queue, decoder, queue1, glupload, glcolorconvert, qmlglsink, nullptr)) {
+            if(!gst_element_link_many(dataSource, parser, _tee, queue, decoder, queue1, _videoSink, nullptr)) {
                 qCritical() << "Unable to link Taisync USB elements.";
                 break;
             }
@@ -377,14 +317,14 @@ VideoReceiver::start()
                 qCritical() << "Unable to link TCP/MPEG-TS dataSource to Demux.";
                 break;
             }
-            if(!gst_element_link_many(parser, _tee, queue, decoder, queue1, glupload, glcolorconvert, qmlglsink, nullptr)) {
+            if(!gst_element_link_many(parser, _tee, queue, decoder, queue1, _videoSink, nullptr)) {
                 qCritical() << "Unable to link TCP/MPEG-TS pipline to parser.";
                 break;
             }
             g_signal_connect(demux, "pad-added", G_CALLBACK(newPadCB), parser);
         } else {
             g_signal_connect(dataSource, "pad-added", G_CALLBACK(newPadCB), demux);
-            if(!gst_element_link_many(demux, parser, _tee, queue, decoder, glupload, glcolorconvert, qmlglsink, nullptr)) {
+            if(!gst_element_link_many(demux, parser, _tee, queue, decoder, _videoSink, nullptr)) {
                 qCritical() << "Unable to link RTSP elements.";
                 break;
             }
@@ -421,21 +361,6 @@ VideoReceiver::start()
 
         // If we failed before adding items to the pipeline, then clean up
         if (!pipelineUp) {
-            if (qmlglsink != nullptr) {
-                gst_object_unref(qmlglsink);
-                qmlglsink = nullptr;
-            }
-
-            if (glcolorconvert != nullptr) {
-                gst_object_unref(glcolorconvert);
-                glcolorconvert = nullptr;
-            }
-
-            if (glupload != nullptr) {
-                gst_object_unref(glupload);
-                glupload = nullptr;
-            }
-
             if (queue1 != nullptr) {
                 gst_object_unref(queue1);
                 queue1 = nullptr;
@@ -475,7 +400,6 @@ VideoReceiver::start()
     } else {
         GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-playing");
         qCDebug(VideoReceiverLog) << "Running";
-        _videoSink = qmlglsink;
     }
     _starting = false;
 #endif
@@ -533,13 +457,6 @@ VideoReceiver::_shutdownPipeline() {
         bus = nullptr;
     }
     gst_element_set_state(_pipeline, GST_STATE_NULL);
-
-    if (_videoSink) {
-        gst_bin_remove(GST_BIN(_pipeline), _videoSink);
-        gst_object_unref(_videoSink);
-        _videoSink = nullptr;
-    }
-
     gst_object_unref(_pipeline);
     _pipeline = nullptr;
     delete _sink;
@@ -695,6 +612,36 @@ VideoReceiver::setVideoDecoder(VideoEncoding encoding)
 
     if (!_tryWithHardwareDecoding) {
         _hwDecoderName = nullptr;
+    }
+}
+
+//-----------------------------------------------------------------------------
+void
+VideoReceiver::setVideoSink(GstElement* videoSink)
+{
+    if(_pipeline != nullptr) {
+        qCDebug(VideoReceiverLog) << "Video receiver pipeline is active, video sink change is not possible";
+        return;
+    }
+
+    if (_videoSink != nullptr) {
+        gst_object_unref(_videoSink);
+        _videoSink = nullptr;
+    }
+
+    if (videoSink != nullptr) {
+        _videoSink = videoSink;
+        gst_object_ref(_videoSink);
+
+        GstPad* pad = gst_element_get_static_pad(_videoSink, "sink");
+
+        if (pad != nullptr) {
+            gst_pad_add_probe(pad, (GstPadProbeType)(GST_PAD_PROBE_TYPE_BUFFER), _videoSinkProbe, this, nullptr);
+            gst_object_unref(pad);
+            pad = nullptr;
+        } else {
+            qCDebug(VideoReceiverLog) << "Unable to find sink pad of video sink";
+        }
     }
 }
 
@@ -912,6 +859,30 @@ VideoReceiver::_unlinkCallBack(GstPad* pad, GstPadProbeInfo* info, gpointer user
 //-----------------------------------------------------------------------------
 #if defined(QGC_GST_STREAMING)
 GstPadProbeReturn
+VideoReceiver::_videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
+{
+    Q_UNUSED(pad);
+    if(info != nullptr && user_data != nullptr) {
+        VideoReceiver* pThis = static_cast<VideoReceiver*>(user_data);
+        pThis->_noteVideoSinkFrame();
+    }
+
+    return GST_PAD_PROBE_OK;
+}
+#endif
+
+//-----------------------------------------------------------------------------
+#if defined(QGC_GST_STREAMING)
+void
+VideoReceiver::_noteVideoSinkFrame()
+{
+    _lastFrameTime = time(nullptr);
+}
+#endif
+
+//-----------------------------------------------------------------------------
+#if defined(QGC_GST_STREAMING)
+GstPadProbeReturn
 VideoReceiver::_keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
     Q_UNUSED(pad);
@@ -970,42 +941,13 @@ VideoReceiver::_updateTimer()
             timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
         }
 
-        guint64 frameId = _lastFrameId;
-
-        if (_videoSink != nullptr) {
-            GstSample* s = nullptr;
-
-            g_object_get(_videoSink, "last-sample", &s, NULL);
-
-            if (s != nullptr) {
-                GstBuffer* b = gst_sample_get_buffer(s);
-
-                if (b != nullptr) {
-                    if (b->pts != GST_CLOCK_TIME_NONE) {
-                        frameId = b->pts;
-                    } else if (b->offset != G_MAXUINT64) {
-                        frameId = b->offset;
-                    } else {
-                        frameId = (guint64)b;
-                    }
-                    b = nullptr;
-                }
-
-                gst_sample_unref(s);
-                s = nullptr;
-            }
-        }
-
         const time_t now = time(nullptr);
 
-        if(frameId == _lastFrameId && now - _lastFrameTime > timeout) {
+        if(now - _lastFrameTime > timeout) {
             stop();
             // We want to start it back again with _updateTimer
             _stop = false;
         }
-
-        _lastFrameId = frameId;
-        _lastFrameTime = now;
     } else {
         if(!_stop && !_running && !_uri.isEmpty() && _videoSettings->streamEnabled()->rawValue().toBool()) {
             start();

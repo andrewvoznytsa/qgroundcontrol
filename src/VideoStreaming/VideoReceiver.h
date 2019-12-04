@@ -47,7 +47,7 @@ public:
     Q_PROPERTY(QString          videoFile           READ    videoFile           NOTIFY  videoFileChanged)
     Q_PROPERTY(bool             showFullScreen      READ    showFullScreen      WRITE   setShowFullScreen     NOTIFY showFullScreenChanged)
 
-    explicit VideoReceiver(QObject* parent, const QString& videoNode);
+    explicit VideoReceiver(QObject* parent = nullptr);
     ~VideoReceiver();
 
 #if defined(QGC_GST_STREAMING)
@@ -64,6 +64,7 @@ public:
     virtual void        setShowFullScreen   (bool show) { _showFullScreen = show; emit showFullScreenChanged(); }
 
     void                  setVideoDecoder   (VideoEncoding encoding);
+    void                  setVideoSink      (GstElement* videoSink);
 
 signals:
     void videoRunningChanged                ();
@@ -109,7 +110,6 @@ protected:
 
     friend class SetReady;
 
-    bool                _engineReady;
     bool                _running;
     bool                _recording;
     bool                _streaming;
@@ -119,8 +119,11 @@ protected:
     Sink*               _sink;
     GstElement*         _tee;
 
+    void _noteVideoSinkFrame                            ();
+
     static gboolean             _onBusMessage           (GstBus* bus, GstMessage* message, gpointer user_data);
     static GstPadProbeReturn    _unlinkCallBack         (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn    _videoSinkProbe         (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn    _keyframeWatch          (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
     virtual void                _detachRecordingBranch  (GstPadProbeInfo* info);
@@ -154,6 +157,5 @@ protected:
     bool            _tryWithHardwareDecoding = true;
     const char*     _hwDecoderName;
     const char*     _swDecoderName;
-    QString         _videoNodeName;
 };
 

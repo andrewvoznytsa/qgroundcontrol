@@ -56,7 +56,7 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
    qmlRegisterUncreatableType<VideoManager> ("QGroundControl.VideoManager", 1, 0, "VideoManager", "Reference only");
    qmlRegisterUncreatableType<VideoReceiver>("QGroundControl",              1, 0, "VideoReceiver","Reference only");
    _videoSettings = toolbox->settingsManager()->videoSettings();
-   QString videoSource = _videoSettings->videoSource()->rawValue().toString();
+    QString videoSource = _videoSettings->videoSource()->rawValue().toString();
    connect(_videoSettings->videoSource(),   &Fact::rawValueChanged, this, &VideoManager::_videoSourceChanged);
    connect(_videoSettings->udpPort(),       &Fact::rawValueChanged, this, &VideoManager::_udpPortChanged);
    connect(_videoSettings->rtspUrl(),       &Fact::rawValueChanged, this, &VideoManager::_rtspUrlChanged);
@@ -73,8 +73,8 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
 
     emit isGStreamerChanged();
     qCDebug(VideoManagerLog) << "New Video Source:" << videoSource;
-    _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this, "videoContent");
-    _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this, "thermalVideo");
+    _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
+    _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
     _updateSettings();
     if(isGStreamer()) {
         startVideo();
@@ -280,6 +280,113 @@ VideoManager::setfullScreen(bool f)
     }
     _fullScreen = f;
     emit fullScreenChanged();
+}
+
+//-----------------------------------------------------------------------------
+#if defined(QGC_GST_STREAMING)
+GstElement*
+VideoManager::_makeVideoSink(const QString& widgetName)
+{
+    GstElement* glupload        = nullptr;
+    GstElement* glcolorconvert  = nullptr;
+    GstElement* qmlglsink       = nullptr;
+    GstElement* bin             = nullptr;
+    GstElement* sink            = nullptr;
+
+    do {
+        QQuickItem* root = qgcApp()->mainRootWindow();
+
+        if (root == nullptr) {
+            qCDebug(VideoManagerLog) << "VideoManager::_makeVideoSink() failed. No root window";
+            break;
+        }
+
+        QQuickItem* widget = root->findChild<QQuickItem*>(widgetName);
+
+        if (widget == nullptr) {
+            qCDebug(VideoManagerLog) << "VideoManager::_makeVideoSink() failed. Widget \'" << widgetName << "\' not found";
+            break;
+        }
+
+        if ((glupload = gst_element_factory_make("glupload", nullptr)) == nullptr) {
+            qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_element_factory_make('glupload')";
+            break;
+        }
+
+        if ((glcolorconvert = gst_element_factory_make("glcolorconvert", nullptr)) == nullptr) {
+            qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_element_factory_make('glcolorconvert')";
+            break;
+        }
+
+        if ((qmlglsink = gst_element_factory_make("qmlglsink", nullptr)) == nullptr) {
+            qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_element_factory_make('qmlglsink')";
+            break;
+        }
+
+        g_object_set(qmlglsink, "widget", widget, NULL);
+
+        if ((bin = gst_bin_new("videosink")) == nullptr) {
+            qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_bin_new('videosink')";
+            break;
+        }
+
+        GstPad* pad;
+
+        if ((pad = gst_element_get_static_pad(glupload, "sink")) == nullptr) {
+            qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_element_get_static_pad(glupload, 'sink')";
+            break;
+        }
+
+        gst_bin_add_many(GST_BIN(bin), glupload, glcolorconvert, qmlglsink, nullptr);
+        gboolean ret = gst_element_link_many(glupload, glcolorconvert, qmlglsink, nullptr);
+
+        qmlglsink = glcolorconvert = glupload = nullptr;
+
+        if (!ret) {
+            qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_element_link_many()";
+            break;
+        }
+
+        gst_element_add_pad(bin, gst_ghost_pad_new("sink", pad));
+        gst_object_unref(pad);
+        pad = nullptr;
+
+        sink = bin;
+        bin = nullptr;
+    } while(0);
+
+    if (bin != nullptr) {
+        gst_object_unref(bin);
+        bin = nullptr;
+    }
+
+    if (qmlglsink != nullptr) {
+        gst_object_unref(qmlglsink);
+        qmlglsink = nullptr;
+    }
+
+    if (glcolorconvert != nullptr) {
+        gst_object_unref(glcolorconvert);
+        glcolorconvert = nullptr;
+    }
+
+    if (glupload != nullptr) {
+        gst_object_unref(glupload);
+        glupload = nullptr;
+    }
+
+    return sink;
+}
+#endif
+
+//-----------------------------------------------------------------------------
+void
+VideoManager::_initVideo()
+{
+#if defined(QGC_GST_STREAMING)
+    _videoReceiver->setVideoSink(_makeVideoSink("videoContent"));
+    _thermalVideoReceiver->setVideoSink(_makeVideoSink("thermalVideo"));
+#endif
 }
 
 //-----------------------------------------------------------------------------
