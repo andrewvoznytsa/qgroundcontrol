@@ -92,6 +92,9 @@ protected slots:
     virtual void _updateTimer               ();
 #if defined(QGC_GST_STREAMING)
     virtual void _restart_timeout           ();
+    virtual void _tcp_timeout               ();
+    virtual void _connected                 ();
+    virtual void _socketError               (QAbstractSocket::SocketError socketError);
     virtual void _handleError               ();
     virtual void _handleEOS                 ();
     virtual void _handleStateChanged        ();
@@ -141,6 +144,10 @@ protected:
     QTimer          _frameTimer;
     QTimer          _restart_timer;
     int             _restart_time_ms;
+    QTimer          _tcp_timer;
+    QTcpSocket*     _socket;
+    bool            _serverPresent;
+    int             _tcpTestInterval_ms;
 
     //-- RTSP UDP reconnect timeout
     uint64_t        _udpReconnect_us;
