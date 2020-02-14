@@ -128,6 +128,9 @@ VideoEnabled {
     }
 
     include($$PWD/../../qmlglsink.pri)
+
+    SOURCES += \
+        $$PWD/gstmetamagic.c
 } else {
     LinuxBuild|MacBuild|iOSBuild|WindowsBuild|AndroidBuild {
         message("Skipping support for video streaming (GStreamer libraries not installed)")

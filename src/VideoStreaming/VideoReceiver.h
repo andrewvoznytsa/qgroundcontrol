@@ -101,6 +101,7 @@ protected:
     typedef struct
     {
         GstPad*         teepad;
+        GstElement*     mm;
         GstElement*     queue;
         GstElement*     filesink;
         gboolean        removing;
