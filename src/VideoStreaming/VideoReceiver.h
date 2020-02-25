@@ -17,6 +17,7 @@
 
 #include "QGCLoggingCategory.h"
 #include <QObject>
+#include <QSize>
 #include <QTimer>
 #include <QTcpSocket>
 
@@ -49,6 +50,7 @@ public:
 
     Q_PROPERTY(int              recordingFormatId   READ    recordingFormatId   WRITE   setRecordingFormatId  NOTIFY recordingFormatIdChanged)
     Q_PROPERTY(int              rtspTimeout         READ    rtspTimeout         WRITE   setRtspTimeout        NOTIFY rtspTimeoutChanged)
+    Q_PROPERTY(QSize            videoSize           READ    videoSize           NOTIFY  videoSizeChanged)
 
     explicit VideoReceiver(QObject* parent = nullptr);
     ~VideoReceiver();
@@ -100,6 +102,8 @@ public:
 
     virtual void        setShowFullScreen   (bool show) { _showFullScreen = show; emit showFullScreenChanged(); }
 
+    virtual QSize           videoSize       () { return _videoSize; }
+
 #if defined(QGC_GST_STREAMING)
     void                  setVideoSink      (GstElement* videoSink);
 #endif
@@ -109,6 +113,7 @@ signals:
     void imageFileChanged                   ();
     void videoFileChanged                   ();
     void showFullScreenChanged              ();
+    void videoSizeChanged                   ();
 #if defined(QGC_GST_STREAMING)
     void recordingChanged                   ();
     void msgErrorReceived                   ();
@@ -128,6 +133,7 @@ protected slots:
     virtual void _updateTimer               ();
 #if defined(QGC_GST_STREAMING)
     GstElement*  _makeSource                (const QString& uri);
+    GstElement*  _makeDecoder               (GstCaps* caps, GstElement* videoSink);
     GstElement*  _makeFileSink              (const QString& videoFile, unsigned format);
     virtual void _handleError               ();
     virtual void _handleEOS                 ();
@@ -136,6 +142,9 @@ protected slots:
 
 protected:
 #if defined(QGC_GST_STREAMING)
+    static void _onNewPad(GstElement* element, GstPad* pad, gpointer data);
+    void _onNewSourcePad(GstPad* pad);
+    void _onNewDecoderPad(GstPad* pad);
 
     typedef struct
     {
@@ -152,7 +161,10 @@ protected:
     bool                _stopping;
     bool                _stop;
     Sink*               _sink;
+    GstElement*         _source;
     GstElement*         _tee;
+    GstElement*         _queue;
+    GstElement*         _decoder;
 
     void _noteVideoSinkFrame                            ();
 
@@ -164,6 +176,8 @@ protected:
     virtual void                _unlinkRecordingBranch  (GstPadProbeInfo* info);
     virtual void                _shutdownRecordingBranch();
     virtual void                _shutdownPipeline       ();
+
+    void                        _setVideoSize           (const QSize& size) { _videoSize = size; emit videoSizeChanged(); }
 
     GstElement*     _pipeline;
     GstElement*     _videoSink;
@@ -192,8 +206,8 @@ protected:
     bool            _storageLimit;
     bool            _unittTestMode;
     bool            _isTaisync;
-    int            _recordingFormatId; // 0 - 2, defined in VideoReceiver.cc / kVideoExtensions. TODO: use a better representation.
-    int            _rtspTimeout;
-
+    int             _recordingFormatId; // 0 - 2, defined in VideoReceiver.cc / kVideoExtensions. TODO: use a better representation.
+    int             _rtspTimeout;
+    QSize           _videoSize;
 };
 

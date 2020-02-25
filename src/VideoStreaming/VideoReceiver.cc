@@ -58,7 +58,10 @@ VideoReceiver::VideoReceiver(QObject* parent)
     , _stopping(false)
     , _stop(true)
     , _sink(nullptr)
+    , _source(nullptr)
     , _tee(nullptr)
+    , _queue(nullptr)
+    , _decoder(nullptr)
     , _pipeline(nullptr)
     , _videoSink(nullptr)
     , _lastFrameId(G_MAXUINT64)
@@ -103,6 +106,108 @@ VideoReceiver::grabImage(QString imageFile)
 
 //-----------------------------------------------------------------------------
 #if defined(QGC_GST_STREAMING)
+void
+VideoReceiver::_onNewPad(GstElement* element, GstPad* pad, gpointer data)
+{
+    VideoReceiver* self = static_cast<VideoReceiver*>(data);
+
+    if (element == self->_source) {
+        self->_onNewSourcePad(pad);
+    } else if (element == self->_decoder) {
+        self->_onNewDecoderPad(pad);
+    } else {
+        qCDebug(VideoReceiverLog) << "Unexpected call!";
+    }
+}
+
+void
+VideoReceiver::_onNewSourcePad(GstPad* pad)
+{
+    GstCaps* caps = gst_pad_get_current_caps(pad);
+
+    bool pipelineUp = false;
+
+    do {
+        if((_tee = gst_element_factory_make("tee", nullptr)) == nullptr)  {
+            qCCritical(VideoReceiverLog) << "gst_element_factory_make('tee') failed";
+            break;
+        }
+
+        if((_queue = gst_element_factory_make("queue", nullptr)) == nullptr)  {
+            // TODO: We may want to add queue2 max-size-buffers=1 to get lower latency
+            //       We should compare gstreamer scripts to QGroundControl to determine the need
+            qCCritical(VideoReceiverLog) << "gst_element_factory_make('queue') failed";
+            break;
+        }
+
+        if ((_decoder = _makeDecoder(caps, _videoSink)) == nullptr) {
+            qCCritical(VideoReceiverLog) << "_makeDecoder() failed";
+            break;
+        }
+
+        g_signal_connect(_decoder, "pad-added", G_CALLBACK(_onNewPad), this);
+
+        gst_bin_add_many(GST_BIN(_pipeline), _tee, _queue, _decoder, nullptr);
+
+        pipelineUp = true;
+
+        gst_element_sync_state_with_parent(_tee);
+        gst_element_sync_state_with_parent(_queue);
+        gst_element_sync_state_with_parent(_decoder);
+
+        if(!gst_element_link_many(_source, _tee, _queue, _decoder, nullptr)) {
+            qCCritical(VideoReceiverLog) << "Unable to link source pipeline";
+            break;
+        }
+    } while(0);
+
+    if (!pipelineUp) {
+        if (_decoder != nullptr) {
+            gst_object_unref(_decoder);
+            _decoder = nullptr;
+        }
+
+        if (_queue != nullptr) {
+            gst_object_unref(_queue);
+            _queue = nullptr;
+        }
+
+        if (_tee != nullptr) {
+            gst_object_unref(_tee);
+            _tee = nullptr;
+        }
+    }
+
+    if (caps != nullptr) {
+        gst_caps_unref(caps);
+        caps = nullptr;
+    }
+}
+
+void
+VideoReceiver::_onNewDecoderPad(GstPad* pad)
+{
+    GstCaps* caps = gst_pad_get_current_caps(pad);
+
+    if(!gst_element_link(_decoder, _videoSink)) {
+        qCCritical(VideoReceiverLog) << "Unable to link decoder and video sink";
+    }
+
+    if (caps != nullptr) {
+        GstStructure* s = gst_caps_get_structure(caps, 0);
+
+        if (s != nullptr) {
+            gint width, height;
+            gst_structure_get_int(s, "width", &width);
+            gst_structure_get_int(s, "height", &height);
+            _setVideoSize(QSize(width, height));
+        }
+
+        gst_caps_unref(caps);
+        caps = nullptr;
+    }
+}
+
 static void
 newPadCB(GstElement* element, GstPad* pad, gpointer data)
 {
@@ -357,12 +462,12 @@ VideoReceiver::_makeSource(const QString& uri)
         // FIXME: AV: Android does not determine MPEG2-TS via parsebin - have to explicitly state which demux to use
         if (isTcpMPEGTS || isUdpMPEGTS) {
             if ((parser = gst_element_factory_make("tsdemux", "parser")) == nullptr) {
-                qCritical(VideoReceiverLog) << "gst_element_factory_make('tsdemux') failed";
+                qCCritical(VideoReceiverLog) << "gst_element_factory_make('tsdemux') failed";
                 break;
             }
         } else {
             if ((parser = gst_element_factory_make("parsebin", "parser")) == nullptr) {
-                qCritical() << "VideoReceiver::_makeSource() failed. Error with gst_element_factory_make('parsebin')";
+                qCCritical(VideoReceiverLog) << "gst_element_factory_make('parsebin') failed";
                 break;
             }
         }
@@ -484,6 +589,23 @@ void VideoReceiver::setVideoPath(const QString& value)
     }
 }
 
+GstElement*
+VideoReceiver::_makeDecoder(GstCaps* caps, GstElement* videoSink)
+{
+    GstElement* decoder = nullptr;
+
+    do {
+        if ((decoder = gst_element_factory_make("decodebin", nullptr)) == nullptr) {
+            qCCritical(VideoReceiverLog) << "gst_element_factory_make('decodebin') failed";
+            break;
+        }
+
+        g_signal_connect(decoder, "autoplug-query", G_CALLBACK(autoplugQueryCB), videoSink);
+    } while(0);
+
+    return decoder;
+}
+
 QString VideoReceiver::imagePath() const
 {
     return _imagePath;
@@ -585,10 +707,6 @@ VideoReceiver::start()
     bool running    = false;
     bool pipelineUp = false;
 
-    GstElement* source  = nullptr;
-    GstElement* queue   = nullptr;
-    GstElement* decoder = nullptr;
-
     do {
         if ((_pipeline = gst_pipeline_new("receiver")) == nullptr) {
             qCCritical(VideoReceiverLog) << "gst_pipeline_new() failed";
@@ -597,43 +715,16 @@ VideoReceiver::start()
 
         g_object_set(_pipeline, "message-forward", TRUE, nullptr);
 
-        if ((source = _makeSource(uri)) == nullptr) {
+        if ((_source = _makeSource(uri)) == nullptr) {
             qCCritical(VideoReceiverLog) << "_makeSource() failed";
             break;
         }
 
-        if((_tee = gst_element_factory_make("tee", nullptr)) == nullptr)  {
-            qCCritical(VideoReceiverLog) << "gst_element_factory_make('tee') failed";
-            break;
-        }
-
-        if((queue = gst_element_factory_make("queue", nullptr)) == nullptr)  {
-            // TODO: We may want to add queue2 max-size-buffers=1 to get lower latency
-            //       We should compare gstreamer scripts to QGroundControl to determine the need
-            qCCritical(VideoReceiverLog) << "gst_element_factory_make('queue') failed";
-            break;
-        }
-
-        if ((decoder = gst_element_factory_make("decodebin", "decoder")) == nullptr) {
-            qCCritical(VideoReceiverLog) << "gst_element_factory_make('decodebin') failed";
-            break;
-        }
-
-        gst_bin_add_many(GST_BIN(_pipeline), source, _tee, queue, decoder, _videoSink, nullptr);
+        gst_bin_add_many(GST_BIN(_pipeline), _source, _videoSink, nullptr);
 
         pipelineUp = true;
 
-        g_signal_connect(source, "pad-added", G_CALLBACK(newPadCB), _tee);
-
-        if(!gst_element_link_many(_tee, queue, decoder, nullptr)) {
-            qCCritical(VideoReceiverLog) << "Unable to receiver pipeline.";
-            break;
-        }
-
-        g_signal_connect(decoder, "pad-added", G_CALLBACK(newPadCB), _videoSink);
-        g_signal_connect(decoder, "autoplug-query", G_CALLBACK(autoplugQueryCB), _videoSink);
-
-        source = queue = decoder = nullptr;
+        g_signal_connect(_source, "pad-added", G_CALLBACK(_onNewPad), this);
 
         GstBus* bus = nullptr;
 
@@ -661,26 +752,10 @@ VideoReceiver::start()
 
         // If we failed before adding items to the pipeline, then clean up
         if (!pipelineUp) {
-            if (decoder != nullptr) {
-                gst_object_unref(decoder);
-                decoder = nullptr;
+            if (_source != nullptr) {
+                gst_object_unref(_source);
+                _source = nullptr;
             }
-
-            if (queue != nullptr) {
-                gst_object_unref(queue);
-                queue = nullptr;
-            }
-
-            if (source != nullptr) {
-                gst_object_unref(source);
-                source = nullptr;
-            }
-
-            if (_tee != nullptr) {
-                gst_object_unref(_tee);
-                _tee = nullptr;
-            }
-
         }
 
         _running = false;
@@ -747,7 +822,10 @@ VideoReceiver::_shutdownPipeline() {
     }
     gst_element_set_state(_pipeline, GST_STATE_NULL);
     gst_bin_remove(GST_BIN(_pipeline), _videoSink);
+    _decoder = nullptr;
+    _queue = nullptr;
     _tee = nullptr;
+    _source = nullptr;
     gst_object_unref(_pipeline);
     _pipeline = nullptr;
     delete _sink;
