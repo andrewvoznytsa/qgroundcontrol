@@ -974,7 +974,7 @@ VideoReceiver::setVideoSink(GstElement* videoSink)
 //                                        +------------------------+
 #if defined(QGC_GST_STREAMING)
 GstElement*
-VideoReceiver::_makeFileSink(const QString& videoFile, unsigned format)
+VideoReceiver::_makeFileSink(const QString& videoFile, FILE_FORMAT format)
 {
     GstElement* fileSink = nullptr;
     GstElement* mux = nullptr;
@@ -983,6 +983,11 @@ VideoReceiver::_makeFileSink(const QString& videoFile, unsigned format)
     bool releaseElements = true;
 
     do{
+        if (format < FILE_FORMAT_FIRST || format > FILE_FORMAT_LAST) {
+            qCCritical(VideoReceiverLog) << "Unsupported file format";
+            break;
+        }
+
         if ((mux = gst_element_factory_make(kVideoMuxes[format], nullptr)) == nullptr) {
             qCCritical(VideoReceiverLog) << "gst_element_factory_make('" << kVideoMuxes[format] << "') failed";
             break;
@@ -1092,7 +1097,7 @@ VideoReceiver::startRecording(const QString &videoFile)
     _sink           = new Sink();
     _sink->teepad   = gst_element_get_request_pad(_tee, "src_%u");
     _sink->queue    = gst_element_factory_make("queue", nullptr);
-    _sink->filesink = _makeFileSink(_videoFile, muxIdx);
+    _sink->filesink = _makeFileSink(_videoFile, (FILE_FORMAT)muxIdx);
     _sink->removing = false;
 
     if(!_sink->teepad || !_sink->queue || !_sink->filesink) {

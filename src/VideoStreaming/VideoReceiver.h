@@ -132,9 +132,6 @@ public slots:
 protected slots:
     virtual void _updateTimer               ();
 #if defined(QGC_GST_STREAMING)
-    GstElement*  _makeSource                (const QString& uri);
-    GstElement*  _makeDecoder               (GstCaps* caps, GstElement* videoSink);
-    GstElement*  _makeFileSink              (const QString& videoFile, unsigned format);
     virtual void _handleError               ();
     virtual void _handleEOS                 ();
     virtual void _handleStateChanged        ();
@@ -142,6 +139,19 @@ protected slots:
 
 protected:
 #if defined(QGC_GST_STREAMING)
+    virtual GstElement* _makeSource(const QString& uri);
+    virtual GstElement* _makeDecoder(GstCaps* caps, GstElement* videoSink);
+
+    typedef enum {
+        FILE_FORMAT_FIRST = 0,
+        FILE_FORMAT_MKV = FILE_FORMAT_FIRST,
+        FILE_FORMAT_MOV,
+        FILE_FORMAT_MP4,
+        FILE_FORMAT_LAST = FILE_FORMAT_MP4
+    } FILE_FORMAT;
+
+    virtual GstElement* _makeFileSink(const QString& videoFile, FILE_FORMAT format);
+
     static void _onNewPad(GstElement* element, GstPad* pad, gpointer data);
     void _onNewSourcePad(GstPad* pad);
     void _onNewDecoderPad(GstPad* pad);
