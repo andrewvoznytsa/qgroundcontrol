@@ -35,7 +35,7 @@ class VideoReceiver : public QObject
 public:
 
 #if defined(QGC_GST_STREAMING)
-    Q_PROPERTY(bool             recording           READ    recording           NOTIFY recordingChanged)
+    Q_PROPERTY(bool             recording           READ    recording           NOTIFY  recordingChanged)
 #endif
     Q_PROPERTY(bool             videoRunning        READ    videoRunning        NOTIFY  videoRunningChanged)
     Q_PROPERTY(QString          imageFile           READ    imageFile           NOTIFY  imageFileChanged)
@@ -50,6 +50,7 @@ public:
 
     Q_PROPERTY(int              recordingFormatId   READ    recordingFormatId   WRITE   setRecordingFormatId  NOTIFY recordingFormatIdChanged)
     Q_PROPERTY(int              rtspTimeout         READ    rtspTimeout         WRITE   setRtspTimeout        NOTIFY rtspTimeoutChanged)
+
     Q_PROPERTY(QSize            videoSize           READ    videoSize           NOTIFY  videoSizeChanged)
 
     explicit VideoReceiver(QObject* parent = nullptr);
@@ -108,6 +109,14 @@ public:
     void                  setVideoSink      (GstElement* videoSink);
 #endif
 
+    typedef enum {
+        FILE_FORMAT_MIN = 0,
+        FILE_FORMAT_MKV = FILE_FORMAT_MIN,
+        FILE_FORMAT_MOV,
+        FILE_FORMAT_MP4,
+        FILE_FORMAT_MAX
+    } FILE_FORMAT;
+
 signals:
     void videoRunningChanged                ();
     void imageFileChanged                   ();
@@ -129,6 +138,13 @@ public slots:
     virtual void stopRecording              ();
     virtual void startRecording             (const QString& videoFile = QString());
 
+    virtual void start_(const QString& uri);
+    virtual void stop_(void);
+    virtual void startRecording_(const QString& videoFile, FILE_FORMAT format);
+    virtual void stopRecording_(void);
+    virtual void startDecoding_(GstElement* videoSink);
+    virtual void stopDecoding_(void);
+
 protected slots:
     virtual void _updateTimer               ();
 #if defined(QGC_GST_STREAMING)
@@ -138,31 +154,23 @@ protected slots:
 #endif
 
 protected:
+
 #if defined(QGC_GST_STREAMING)
     virtual GstElement* _makeSource(const QString& uri);
     virtual GstElement* _makeDecoder(GstCaps* caps, GstElement* videoSink);
-
-    typedef enum {
-        FILE_FORMAT_FIRST = 0,
-        FILE_FORMAT_MKV = FILE_FORMAT_FIRST,
-        FILE_FORMAT_MOV,
-        FILE_FORMAT_MP4,
-        FILE_FORMAT_LAST = FILE_FORMAT_MP4
-    } FILE_FORMAT;
 
     virtual GstElement* _makeFileSink(const QString& videoFile, FILE_FORMAT format);
 
     static void _onNewPad(GstElement* element, GstPad* pad, gpointer data);
     void _onNewSourcePad(GstPad* pad);
     void _onNewDecoderPad(GstPad* pad);
+    bool _addDecoder(GstPad* pad);
+    bool _addVideoSink(GstPad* pad);
+    void _scheduleUnlink(GstElement* from);
 
-    typedef struct
-    {
-        GstPad*         teepad;
-        GstElement*     queue;
-        GstElement*     filesink;
-        gboolean        removing;
-    } Sink;
+    bool                _decoding;
+    bool                _removingDecoder;
+    bool                _removingRecorder;
 
     bool                _running;
     bool                _recording;
@@ -170,27 +178,29 @@ protected:
     bool                _starting;
     bool                _stopping;
     bool                _stop;
-    Sink*               _sink;
     GstElement*         _source;
     GstElement*         _tee;
-    GstElement*         _queue;
+    GstElement*         _decoderQueue;
+    GstElement*         _recorderQueue;
     GstElement*         _decoder;
+    GstElement*         _videoSink;
+    GstElement*         _fileSink;
 
     void _noteVideoSinkFrame                            ();
 
     static gboolean             _onBusMessage           (GstBus* bus, GstMessage* message, gpointer user_data);
-    static GstPadProbeReturn    _unlinkCallBack         (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn    _unlinkBranch           (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn    _videoSinkProbe         (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn    _keyframeWatch          (GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
-    virtual void                _unlinkRecordingBranch  (GstPadProbeInfo* info);
+    virtual void                _unlinkBranch           (GstPad* src);
+    virtual void                _shutdownDecodingBranch ();
     virtual void                _shutdownRecordingBranch();
     virtual void                _shutdownPipeline       ();
 
     void                        _setVideoSize           (const QSize& size) { _videoSize = size; emit videoSizeChanged(); }
 
     GstElement*     _pipeline;
-    GstElement*     _videoSink;
     guint64         _lastFrameId;
     qint64          _lastFrameTime;
 
