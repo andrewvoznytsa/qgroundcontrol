@@ -40,56 +40,16 @@ public:
     Q_PROPERTY(bool             videoRunning        READ    videoRunning        NOTIFY  videoRunningChanged)
     Q_PROPERTY(QString          imageFile           READ    imageFile           NOTIFY  imageFileChanged)
     Q_PROPERTY(QString          videoFile           READ    videoFile           NOTIFY  videoFileChanged)
-    Q_PROPERTY(QString          imagePath           READ    imagePath           NOTIFY  imagePathChanged)
-    Q_PROPERTY(QString          videoPath           READ    videoPath           NOTIFY  videoPathChanged)
 
     Q_PROPERTY(bool             showFullScreen      READ    showFullScreen      WRITE   setShowFullScreen     NOTIFY showFullScreenChanged)
-    Q_PROPERTY(bool             streamEnabled       READ    streamEnabled       WRITE   setStreamEnabled      NOTIFY streamEnabledChanged)
-    Q_PROPERTY(bool             streamConfigured    READ    streamConfigured    WRITE   setStreamConfigured   NOTIFY streamConfiguredChanged)
-    Q_PROPERTY(bool             isTaisync           READ    isTaisync           WRITE   setIsTaysinc          NOTIFY isTaisyncChanged)
-
-    Q_PROPERTY(int              recordingFormatId   READ    recordingFormatId   WRITE   setRecordingFormatId  NOTIFY recordingFormatIdChanged)
-    Q_PROPERTY(int              rtspTimeout         READ    rtspTimeout         WRITE   setRtspTimeout        NOTIFY rtspTimeoutChanged)
 
     Q_PROPERTY(QSize            videoSize           READ    videoSize           NOTIFY  videoSizeChanged)
 
     explicit VideoReceiver(QObject* parent = nullptr);
     ~VideoReceiver();
 
-    bool streamEnabled() const;
-    Q_SLOT void setStreamEnabled(bool enabled);
-    Q_SIGNAL void streamEnabledChanged();
-
-    bool streamConfigured() const;
-    Q_SLOT void setStreamConfigured(bool enabled);
-    Q_SIGNAL void streamConfiguredChanged();
-
-    bool isTaisync() const;
-    Q_SLOT void setIsTaysinc(bool value);
-    Q_SIGNAL void isTaisyncChanged();
-
-    QString videoPath() const;
-    Q_SLOT void setVideoPath(const QString& path);
-    Q_SIGNAL void videoPathChanged();
-
-    QString imagePath() const;
-    Q_SLOT void setImagePath(const QString& path);
-    Q_SIGNAL void imagePathChanged();
-
-    int recordingFormatId() const;
-    Q_SLOT void setRecordingFormatId(int value);
-    Q_SIGNAL void recordingFormatIdChanged();
-
-    int rtspTimeout() const;
-    Q_SLOT void setRtspTimeout(int value);
-    Q_SIGNAL void rtspTimeoutChanged();
-
     Q_SIGNAL void restartTimeout();
-    Q_SIGNAL void sendMessage(const QString& message);
 
-    // Emitted before recording starts.
-    Q_SIGNAL void beforeRecording();
-    void setUnittestMode(bool runUnitTests);
 #if defined(QGC_GST_STREAMING)
     virtual bool            recording       () { return _recording; }
 #endif
@@ -132,18 +92,12 @@ signals:
 #endif
 
 public slots:
-    virtual void start                      ();
-    virtual void stop                       ();
-    virtual void setUri                     (const QString& uri);
-    virtual void stopRecording              ();
-    virtual void startRecording             (const QString& videoFile = QString());
-
-    virtual void start_(const QString& uri);
-    virtual void stop_(void);
-    virtual void startRecording_(const QString& videoFile, FILE_FORMAT format);
-    virtual void stopRecording_(void);
-    virtual void startDecoding_(GstElement* videoSink);
-    virtual void stopDecoding_(void);
+    virtual void start(const QString& uri, unsigned timeout);
+    virtual void stop(void);
+    virtual void startRecording(const QString& videoFile, FILE_FORMAT format);
+    virtual void stopRecording(void);
+    virtual void startDecoding(GstElement* videoSink);
+    virtual void stopDecoding(void);
 
 protected slots:
     virtual void _updateTimer               ();
@@ -213,21 +167,11 @@ protected:
     uint64_t        _udpReconnect_us;
 #endif
 
-    QString         _uri;
     QString         _imageFile;
     QString         _videoFile;
-    QString         _videoPath;
-    QString         _imagePath;
 
     bool            _videoRunning;
     bool            _showFullScreen;
-    bool            _streamEnabled;
-    bool            _streamConfigured;
-    bool            _storageLimit;
-    bool            _unittTestMode;
-    bool            _isTaisync;
-    int             _recordingFormatId; // 0 - 2, defined in VideoReceiver.cc / kVideoExtensions. TODO: use a better representation.
-    int             _rtspTimeout;
+    unsigned        _timeout;
     QSize           _videoSize;
 };
-

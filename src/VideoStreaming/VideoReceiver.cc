@@ -15,13 +15,9 @@
  */
 
 #include "VideoReceiver.h"
-#include "VideoManager.h"
-#ifdef QGC_GST_TAISYNC_ENABLED
-#include "TaisyncHandler.h"
-#endif
+
 #include <QDebug>
 #include <QUrl>
-#include <QDir>
 #include <QDateTime>
 #include <QSysInfo>
 
@@ -29,21 +25,11 @@ QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 
 #if defined(QGC_GST_STREAMING)
 
-static const char* kVideoExtensions[] =
-{
-    "mkv",
-    "mov",
-    "mp4"
-};
-
-static const char* kVideoMuxes[] =
-{
+static const char* kFileMux[VideoReceiver::FILE_FORMAT_MAX - VideoReceiver::FILE_FORMAT_MIN] = {
     "matroskamux",
     "qtmux",
     "mp4mux"
 };
-
-#define NUM_MUXES (sizeof(kVideoMuxes) / sizeof(char*))
 
 #endif
 
@@ -74,10 +60,6 @@ VideoReceiver::VideoReceiver(QObject* parent)
 #endif
     , _videoRunning(false)
     , _showFullScreen(false)
-    , _streamEnabled(false)
-    , _streamConfigured(false)
-    , _unittTestMode(false)
-    , _isTaisync(false)
 {
     // FIXME: AV: temporal workaround to allow for Qt::QueuedConnection for gstreamer signals. Need to evaluate proper solution - perhaps QtGst will be helpful
 #if defined(QGC_GST_STREAMING)
@@ -580,58 +562,6 @@ VideoReceiver::_makeSource(const QString& uri)
     return srcbin;
 }
 
-bool VideoReceiver::streamEnabled() const
-{
-    return _streamEnabled;
-}
-
-void VideoReceiver::setStreamEnabled(bool enabled)
-{
-    if (_streamEnabled != enabled) {
-        _streamEnabled = enabled;
-        emit streamEnabledChanged();
-    }
-}
-
-bool VideoReceiver::streamConfigured() const
-{
-    return _streamConfigured;
-}
-
-void VideoReceiver::setStreamConfigured(bool enabled)
-{
-    if (_streamConfigured != enabled) {
-        _streamConfigured = enabled;
-        emit streamEnabledChanged();
-    }
-}
-
-bool VideoReceiver::isTaisync() const
-{
-    return _isTaisync;
-}
-
-void VideoReceiver::setIsTaysinc(bool enabled)
-{
-    if (_isTaisync != enabled) {
-        _isTaisync = enabled;
-        emit isTaisyncChanged();
-    }
-}
-
-QString VideoReceiver::videoPath() const
-{
-    return _videoPath;
-}
-
-void VideoReceiver::setVideoPath(const QString& value)
-{
-    if (_videoPath != value) {
-        _videoPath = value;
-        emit videoPathChanged();
-    }
-}
-
 GstElement*
 VideoReceiver::_makeDecoder(GstCaps* caps, GstElement* videoSink)
 {
@@ -649,77 +579,7 @@ VideoReceiver::_makeDecoder(GstCaps* caps, GstElement* videoSink)
     return decoder;
 }
 
-QString VideoReceiver::imagePath() const
-{
-    return _imagePath;
-}
-
-void VideoReceiver::setImagePath(const QString& value)
-{
-    if (_imagePath != value) {
-        _imagePath = value;
-        emit imagePathChanged();
-    }
-}
-
-int VideoReceiver::recordingFormatId() const
-{
-    return _recordingFormatId;
-}
-
-void VideoReceiver::setRecordingFormatId(int value)
-{
-    if (_recordingFormatId != value && value < (int) NUM_MUXES) {
-        _recordingFormatId = value;
-        emit recordingFormatIdChanged();
-    }
-}
-
-int VideoReceiver::rtspTimeout() const
-{
-    return _rtspTimeout;
-}
-
-void VideoReceiver::setRtspTimeout(int value)
-{
-    if (_rtspTimeout != value) {
-        _rtspTimeout = value;
-        emit rtspTimeoutChanged();
-    }
-}
-
-void VideoReceiver::setUnittestMode(bool runUnitTests)
-{
-    _unittTestMode = runUnitTests;
-}
-
 #endif
-
-void
-VideoReceiver::start()
-{
-#if defined(QGC_GST_STREAMING)
-    qCDebug(VideoReceiverLog) << "Starting " << _uri;
-    if(_unittTestMode) {
-        return;
-    }
-    if(!_streamEnabled || !_streamConfigured) {
-        qCDebug(VideoReceiverLog) << "Stream not enabled/configured";
-        return;
-    }
-
-    QString uri = _uri;
-
-#if defined(QGC_GST_TAISYNC_ENABLED) && (defined(__android__) || defined(__ios__))
-    //-- Taisync on iOS or Android sends a raw h.264 stream
-    if (_isTaisync) {
-        uri = QString("tsusb://0.0.0.0:%1").arg(TAISYNC_VIDEO_UDP_PORT);
-    }
-#endif
-
-    start_(uri);
-#endif
-}
 
 //-----------------------------------------------------------------------------
 // When we finish our pipeline will look like this:
@@ -731,7 +591,7 @@ VideoReceiver::start()
 //              +-->_recorderQueue-->[_fileSink]
 //
 void
-VideoReceiver::start_(const QString& uri)
+VideoReceiver::start(const QString& uri, unsigned timeout)
 {
     if (uri.isEmpty()) {
         qCDebug(VideoReceiverLog) << "Failed because URI is not specified";
@@ -745,6 +605,8 @@ VideoReceiver::start_(const QString& uri)
         qCDebug(VideoReceiverLog) << "Already running!";
         return;
     }
+
+    _timeout = timeout;
 
     _starting = true;
 
@@ -851,22 +713,8 @@ VideoReceiver::start_(const QString& uri)
 #endif
 }
 
-//-----------------------------------------------------------------------------
 void
-VideoReceiver::stop()
-{
-#if defined(QGC_GST_STREAMING)
-    if(_unittTestMode) {
-        return;
-    }
-
-    stopDecoding_();
-    stop_();
-#endif
-}
-
-void
-VideoReceiver::stop_(void)
+VideoReceiver::stop(void)
 {
 #if defined(QGC_GST_STREAMING)
     _stop = true;
@@ -890,13 +738,6 @@ VideoReceiver::stop_(void)
         gst_message_unref(message);
     }
 #endif
-}
-
-//-----------------------------------------------------------------------------
-void
-VideoReceiver::setUri(const QString & uri)
-{
-    _uri = uri;
 }
 
 //-----------------------------------------------------------------------------
@@ -1031,22 +872,10 @@ VideoReceiver::_onBusMessage(GstBus* bus, GstMessage* msg, gpointer data)
 void
 VideoReceiver::setVideoSink(GstElement* videoSink)
 {
-    startDecoding_(videoSink);
+    startDecoding(videoSink);
 }
 #endif
 
-//-----------------------------------------------------------------------------
-// When we finish our pipeline will look like this:
-//
-//                                   +-->queue-->decoder-->_videosink
-//                                   |
-//                         source-->tee
-//                                   |
-//                                   |    +---------_sink----------+
-//                                   |    |                        |
-//   we are adding these elements->  +->teepad-->queue-->_filesink |
-//                                        |                        |
-//                                        +------------------------+
 #if defined(QGC_GST_STREAMING)
 GstElement*
 VideoReceiver::_makeFileSink(const QString& videoFile, FILE_FORMAT format)
@@ -1063,8 +892,8 @@ VideoReceiver::_makeFileSink(const QString& videoFile, FILE_FORMAT format)
             break;
         }
 
-        if ((mux = gst_element_factory_make(kVideoMuxes[format], nullptr)) == nullptr) {
-            qCCritical(VideoReceiverLog) << "gst_element_factory_make('" << kVideoMuxes[format] << "') failed";
+        if ((mux = gst_element_factory_make(kFileMux[format - FILE_FORMAT_MIN], nullptr)) == nullptr) {
+            qCCritical(VideoReceiverLog) << "gst_element_factory_make('" << kFileMux[format - FILE_FORMAT_MIN] << "') failed";
             break;
         }
 
@@ -1137,43 +966,7 @@ VideoReceiver::_makeFileSink(const QString& videoFile, FILE_FORMAT format)
 #endif
 
 void
-VideoReceiver::startRecording(const QString &videoFile)
-{
-#if defined(QGC_GST_STREAMING)
-    emit beforeRecording();
-
-    qCDebug(VideoReceiverLog) << "Starting recording";
-    // exit immediately if we are already recording
-    if(_pipeline == nullptr || _recording) {
-        qCDebug(VideoReceiverLog) << "Already recording!";
-        return;
-    }
-
-    uint32_t muxIdx = _recordingFormatId;
-
-    if(muxIdx >= NUM_MUXES) {
-        emit sendMessage(tr("Invalid video format defined."));
-        return;
-    }
-
-    QString savePath = _videoPath;
-    if(savePath.isEmpty()) {
-        emit sendMessage(tr("Unabled to record video. Video save path must be specified in Settings."));
-        return;
-    }
-
-    QString videoFilePath = savePath + "/"
-            + (videoFile.isEmpty() ? QDateTime::currentDateTime().toString("yyyy-MM-dd_hh.mm.ss") : videoFile)
-            + "." + kVideoExtensions[muxIdx];
-
-    startRecording_(videoFilePath, (FILE_FORMAT)muxIdx);
-#else
-    Q_UNUSED(videoFile)
-#endif
-}
-
-void
-VideoReceiver::startRecording_(const QString& videoFilePath, FILE_FORMAT format)
+VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
 {
 #if defined(QGC_GST_STREAMING)
     qCDebug(VideoReceiverLog) << "Starting recording";
@@ -1239,12 +1032,6 @@ VideoReceiver::startRecording_(const QString& videoFilePath, FILE_FORMAT format)
 void
 VideoReceiver::stopRecording(void)
 {
-    stopRecording_();
-}
-
-void
-VideoReceiver::stopRecording_(void)
-{
 #if defined(QGC_GST_STREAMING)
     qCDebug(VideoReceiverLog) << "Stopping recording";
 
@@ -1261,7 +1048,7 @@ VideoReceiver::stopRecording_(void)
 }
 
 void
-VideoReceiver::startDecoding_(GstElement* videoSink)
+VideoReceiver::startDecoding(GstElement* videoSink)
 {
 #if defined(QGC_GST_STREAMING)
     qCDebug(VideoReceiverLog) << "Starting decoding";
@@ -1343,7 +1130,7 @@ VideoReceiver::_scheduleUnlink(GstElement* from)
 }
 
 void
-VideoReceiver::stopDecoding_(void)
+VideoReceiver::stopDecoding(void)
 {
 #if defined(QGC_GST_STREAMING)
     qCDebug(VideoReceiverLog) << "Stopping decoding";
@@ -1520,10 +1307,9 @@ VideoReceiver::_updateTimer()
     }
 
     if(_videoRunning) {
-        uint32_t timeout = _rtspTimeout;
         const qint64 now = QDateTime::currentSecsSinceEpoch();
 
-        if(now - _lastFrameTime > timeout) {
+        if(now - _lastFrameTime > _timeout) {
             stop();
             // We want to start it back again with _updateTimer
             _stop = false;
@@ -1537,4 +1323,3 @@ VideoReceiver::_updateTimer()
 #endif
 #endif
 }
-

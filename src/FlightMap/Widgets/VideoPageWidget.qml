@@ -160,11 +160,11 @@ Item {
                 enabled:        _videoRunning && _streamingEnabled
                 onClicked: {
                     if (_recordingVideo) {
-                        _videoReceiver.stopRecording()
+                        QGroundControl.videoManager.stopRecording()
                         // reset blinking animation
                         recordBtnBackground.opacity = 1
                     } else {
-                        _videoReceiver.startRecording(videoFileName.text)
+                        QGroundControl.videoManager.startRecording(videoFileName.text)
                     }
                 }
             }

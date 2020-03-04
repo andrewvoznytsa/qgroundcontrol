@@ -30,6 +30,12 @@
 
 QGC_LOGGING_CATEGORY(VideoManagerLog, "VideoManagerLog")
 
+static const char* kFileExtension[VideoReceiver::FILE_FORMAT_MAX - VideoReceiver::FILE_FORMAT_MIN] = {
+    "mkv",
+    "mov",
+    "mp4"
+};
+
 //-----------------------------------------------------------------------------
 VideoManager::VideoManager(QGCApplication* app, QGCToolbox* toolbox)
     : QGCTool(app, toolbox)
@@ -74,55 +80,12 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
     emit isGStreamerChanged();
     qCDebug(VideoManagerLog) << "New Video Source:" << videoSource;
     _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
-    _videoReceiver->setUnittestMode(qgcApp()->runningUnitTests());
     _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
-    _thermalVideoReceiver->setUnittestMode(qgcApp()->runningUnitTests());
     _videoReceiver->moveToThread(qgcApp()->thread());
     _thermalVideoReceiver->moveToThread(qgcApp()->thread());
 
-    // Those connects are temporary: In a perfect world those connections are going to be done on the Qml
-    // but because currently the videoReceiver is created in the C++ world, this is easier.
-    // The fact returning a QVariant is a quite annoying to use proper signal / slot connection.
-    _updateSettings();
-
-    auto appSettings = toolbox->settingsManager()->appSettings();
-    for (auto *videoReceiver : { _videoReceiver, _thermalVideoReceiver}) {
-        // First, Setup the current values from the settings.
-        videoReceiver->setRtspTimeout(_videoSettings->rtspTimeout()->rawValue().toInt());
-        videoReceiver->setStreamEnabled(_videoSettings->streamEnabled()->rawValue().toBool());
-        videoReceiver->setRecordingFormatId(_videoSettings->recordingFormat()->rawValue().toInt());
-        videoReceiver->setStreamConfigured(_videoSettings->streamConfigured());
-
-        connect(_videoSettings->rtspTimeout(), &Fact::rawValueChanged,
-            videoReceiver, [videoReceiver](const QVariant &value) {
-                videoReceiver->setRtspTimeout(value.toInt());
-            }
-        );
-
-        connect(_videoSettings->streamEnabled(), &Fact::rawValueChanged,
-                videoReceiver, [videoReceiver](const QVariant &value) {
-                    videoReceiver->setStreamEnabled(value.toBool());
-            }
-        );
-
-        connect(_videoSettings->recordingFormat(), &Fact::rawValueChanged,
-            videoReceiver, [videoReceiver](const QVariant &value) {
-                videoReceiver->setRecordingFormatId(value.toInt());
-            }
-        );
-
-        // Why some options are facts while others aren't?
-        connect(_videoSettings, &VideoSettings::streamConfiguredChanged, videoReceiver, &VideoReceiver::setStreamConfigured);
-
-        // Fix those.
-        // connect(appSettings, &Fact::rawValueChanged, videoReceiver, &VideoReceiver::setVideoPath);
-        // connect(appSettings->videoSavePath(), &Fact::rawValueChanged, videoReceiver, &VideoReceiver::setImagePath);
-
-        // Connect the video receiver with the rest of the app.
-        connect(videoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
-        connect(videoReceiver, &VideoReceiver::sendMessage, qgcApp(), &QGCApplication::showMessage);
-        connect(videoReceiver, &VideoReceiver::beforeRecording, this, &VideoManager::cleanupOldVideos);
-    }
+    connect(_videoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
+    connect(_thermalVideoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
 
     _updateSettings();
     if(isGStreamer()) {
@@ -135,17 +98,7 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
 #endif
 }
 
-QStringList VideoManager::videoMuxes()
-{
-    return {"matroskamux", "qtmux", "mp4mux"};
-}
-
-QStringList VideoManager::videoExtensions()
-{
-    return {"mkv", "mov", "mp4"};
-}
-
-void VideoManager::cleanupOldVideos()
+void VideoManager::_cleanupOldVideos()
 {
 #if defined(QGC_GST_STREAMING)
     //-- Only perform cleanup if storage limit is enabled
@@ -158,9 +111,11 @@ void VideoManager::cleanupOldVideos()
     videoDir.setSorting(QDir::Time);
 
     QStringList nameFilters;
-    for(const QString& extension : videoExtensions()) {
-        nameFilters << QString("*.") + extension;
+
+    for(size_t i = 0; i < sizeof(kFileExtension) / sizeof(kFileExtension[0]); i += 1) {
+        nameFilters << QString("*.") + kFileExtension[i];
     }
+
     videoDir.setNameFilters(nameFilters);
     //-- get the list of videos stored
     QFileInfoList vidList = videoDir.entryInfoList();
@@ -188,17 +143,83 @@ void VideoManager::cleanupOldVideos()
 void
 VideoManager::startVideo()
 {
-    if(_videoReceiver) _videoReceiver->start();
-    if(_thermalVideoReceiver) _thermalVideoReceiver->start();
+    if (qgcApp()->runningUnitTests()) {
+        return;
+    }
+
+    if(!_videoSettings->streamEnabled()->rawValue().toBool() || !_videoSettings->streamConfigured()) {
+        qCDebug(VideoReceiverLog) << "Stream not enabled/configured";
+        return;
+    }
+
+    const unsigned timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
+
+    if(_videoReceiver) _videoReceiver->start(_videoUri, timeout);
+    if(_thermalVideoReceiver) _thermalVideoReceiver->start(_thermalVideoUri, timeout);
 }
 
 //-----------------------------------------------------------------------------
 void
 VideoManager::stopVideo()
 {
+    if (qgcApp()->runningUnitTests()) {
+        return;
+    }
+
     if(_videoReceiver) _videoReceiver->stop();
     if(_thermalVideoReceiver) _thermalVideoReceiver->stop();
 }
+
+void
+VideoManager::startRecording(const QString& videoFile)
+{
+    if (qgcApp()->runningUnitTests()) {
+        return;
+    }
+
+    if (!_videoReceiver) {
+        qgcApp()->showMessage(tr("Video receiver is not ready."));
+        return;
+    }
+
+    const VideoReceiver::FILE_FORMAT fileFormat = static_cast<VideoReceiver::FILE_FORMAT>(_videoSettings->recordingFormat()->rawValue().toInt());
+
+    if(fileFormat < VideoReceiver::FILE_FORMAT_MIN || fileFormat >= VideoReceiver::FILE_FORMAT_MAX) {
+        qgcApp()->showMessage(tr("Invalid video format defined."));
+        return;
+    }
+
+    //-- Disk usage maintenance
+    _cleanupOldVideos();
+
+    QString savePath = qgcApp()->toolbox()->settingsManager()->appSettings()->videoSavePath();
+
+    if(savePath.isEmpty()) {
+        qgcApp()->showMessage(tr("Unabled to record video. Video save path must be specified in Settings."));
+        return;
+    }
+
+    QString videoFilePath = savePath + "/"
+            + (videoFile.isEmpty() ? QDateTime::currentDateTime().toString("yyyy-MM-dd_hh.mm.ss") : videoFile)
+            + "." + kFileExtension[fileFormat - VideoReceiver::FILE_FORMAT_MIN];
+
+    _videoReceiver->startRecording(videoFilePath, fileFormat);
+}
+
+void
+VideoManager::stopRecording()
+{
+    if (qgcApp()->runningUnitTests()) {
+        return;
+    }
+
+    if (!_videoReceiver) {
+        return;
+    }
+
+    _videoReceiver->stopRecording();
+}
+
 
 //-----------------------------------------------------------------------------
 double VideoManager::aspectRatio()
@@ -210,6 +231,7 @@ double VideoManager::aspectRatio()
             return pInfo->aspectRatio();
         }
     }
+    // FIXME: AV: use _videoReceiver->videoSize() to calculate AR (if AR is not specified in the settings?)
     return _videoSettings->aspectRatio()->rawValue().toDouble();
 }
 
@@ -440,23 +462,23 @@ VideoManager::_updateSettings()
             qCDebug(VideoManagerLog) << "Configure primary stream: " << pInfo->uri();
             switch(pInfo->type()) {
                 case VIDEO_STREAM_TYPE_RTSP:
-                    _videoReceiver->setUri(pInfo->uri());
+                    _setVideoUri(pInfo->uri());
                     _toolbox->settingsManager()->videoSettings()->videoSource()->setRawValue(VideoSettings::videoSourceRTSP);
                     break;
                 case VIDEO_STREAM_TYPE_TCP_MPEG:
-                    _videoReceiver->setUri(pInfo->uri());
+                    _setVideoUri(pInfo->uri());
                     _toolbox->settingsManager()->videoSettings()->videoSource()->setRawValue(VideoSettings::videoSourceTCP);
                     break;
                 case VIDEO_STREAM_TYPE_RTPUDP:
-                    _videoReceiver->setUri(QStringLiteral("udp://0.0.0.0:%1").arg(pInfo->uri()));
+                    _setVideoUri(QStringLiteral("udp://0.0.0.0:%1").arg(pInfo->uri()));
                     _toolbox->settingsManager()->videoSettings()->videoSource()->setRawValue(VideoSettings::videoSourceUDPH264);
                     break;
                 case VIDEO_STREAM_TYPE_MPEG_TS_H264:
-                    _videoReceiver->setUri(QStringLiteral("mpegts://0.0.0.0:%1").arg(pInfo->uri()));
+                    _setVideoUri(QStringLiteral("mpegts://0.0.0.0:%1").arg(pInfo->uri()));
                     _toolbox->settingsManager()->videoSettings()->videoSource()->setRawValue(VideoSettings::videoSourceMPEGTS);
                     break;
                 default:
-                    _videoReceiver->setUri(pInfo->uri());
+                    _setVideoUri(pInfo->uri());
                     break;
             }
             //-- Thermal stream (if any)
@@ -466,16 +488,16 @@ VideoManager::_updateSettings()
                 switch(pTinfo->type()) {
                     case VIDEO_STREAM_TYPE_RTSP:
                     case VIDEO_STREAM_TYPE_TCP_MPEG:
-                        _thermalVideoReceiver->setUri(pTinfo->uri());
+                        _setThermalVideoUri(pTinfo->uri());
                         break;
                     case VIDEO_STREAM_TYPE_RTPUDP:
-                        _thermalVideoReceiver->setUri(QStringLiteral("udp://0.0.0.0:%1").arg(pTinfo->uri()));
+                        _setThermalVideoUri(QStringLiteral("udp://0.0.0.0:%1").arg(pTinfo->uri()));
                         break;
                     case VIDEO_STREAM_TYPE_MPEG_TS_H264:
-                        _thermalVideoReceiver->setUri(QStringLiteral("mpegts://0.0.0.0:%1").arg(pTinfo->uri()));
+                        _setThermalVideoUri(QStringLiteral("mpegts://0.0.0.0:%1").arg(pTinfo->uri()));
                         break;
                     default:
-                        _thermalVideoReceiver->setUri(pTinfo->uri());
+                        _setThermalVideoUri(pTinfo->uri());
                         break;
                 }
             }
@@ -484,15 +506,42 @@ VideoManager::_updateSettings()
     }
     QString source = _videoSettings->videoSource()->rawValue().toString();
     if (source == VideoSettings::videoSourceUDPH264)
-        _videoReceiver->setUri(QStringLiteral("udp://0.0.0.0:%1").arg(_videoSettings->udpPort()->rawValue().toInt()));
+        _setVideoUri(QStringLiteral("udp://0.0.0.0:%1").arg(_videoSettings->udpPort()->rawValue().toInt()));
     else if (source == VideoSettings::videoSourceUDPH265)
-        _videoReceiver->setUri(QStringLiteral("udp265://0.0.0.0:%1").arg(_videoSettings->udpPort()->rawValue().toInt()));
+        _setVideoUri(QStringLiteral("udp265://0.0.0.0:%1").arg(_videoSettings->udpPort()->rawValue().toInt()));
     else if (source == VideoSettings::videoSourceMPEGTS)
-        _videoReceiver->setUri(QStringLiteral("mpegts://0.0.0.0:%1").arg(_videoSettings->udpPort()->rawValue().toInt()));
+        _setVideoUri(QStringLiteral("mpegts://0.0.0.0:%1").arg(_videoSettings->udpPort()->rawValue().toInt()));
     else if (source == VideoSettings::videoSourceRTSP)
-        _videoReceiver->setUri(_videoSettings->rtspUrl()->rawValue().toString());
+        _setVideoUri(_videoSettings->rtspUrl()->rawValue().toString());
     else if (source == VideoSettings::videoSourceTCP)
-        _videoReceiver->setUri(QStringLiteral("tcp://%1").arg(_videoSettings->tcpUrl()->rawValue().toString()));
+        _setVideoUri(QStringLiteral("tcp://%1").arg(_videoSettings->tcpUrl()->rawValue().toString()));
+}
+
+void
+VideoManager::_setVideoUri(const QString& uri)
+{
+#if defined(QGC_GST_TAISYNC_ENABLED) && (defined(__android__) || defined(__ios__))
+    //-- Taisync on iOS or Android sends a raw h.264 stream
+    if (isTaisync()) {
+        _videoUri = QString("tsusb://0.0.0.0:%1").arg(TAISYNC_VIDEO_UDP_PORT);
+        return;
+    }
+#endif
+    _videoUri = uri;
+}
+
+void
+VideoManager::_setThermalVideoUri(const QString& uri)
+{
+#if defined(QGC_GST_TAISYNC_ENABLED) && (defined(__android__) || defined(__ios__))
+    //-- Taisync on iOS or Android sends a raw h.264 stream
+    if (isTaisync()) {
+        // FIXME: AV: TAISYNC_VIDEO_UDP_PORT is used by video stream, thermal stream should go via its own proxy
+        _thermalVideoUri = QString("tsusb://0.0.0.0:%1").arg(TAISYNC_VIDEO_UDP_PORT);
+        return;
+    }
+#endif
+    _thermalVideoUri = uri;
 }
 
 //-----------------------------------------------------------------------------

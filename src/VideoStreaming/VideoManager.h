@@ -67,9 +67,6 @@ public:
     virtual VideoReceiver*  videoReceiver           () { return _videoReceiver; }
     virtual VideoReceiver*  thermalVideoReceiver    () { return _thermalVideoReceiver; }
 
-    QStringList videoExtensions();
-    QStringList videoMuxes();
-
 #if defined(QGC_DISABLE_UVC)
     virtual bool        uvcEnabled          () { return false; }
 #else
@@ -85,7 +82,8 @@ public:
     Q_INVOKABLE void startVideo     ();
     Q_INVOKABLE void stopVideo      ();
 
-    void cleanupOldVideos();
+    Q_INVOKABLE void startRecording (const QString& videoFile = QString());
+    Q_INVOKABLE void stopRecording  ();
 
 signals:
     void hasVideoChanged            ();
@@ -115,6 +113,9 @@ protected:
 #endif
     void _initVideo                 ();
     void _updateSettings            ();
+    void _setVideoUri               (const QString& uri);
+    void _setThermalVideoUri        (const QString& uri);
+    void _cleanupOldVideos          ();
 
 protected:
     SubtitleWriter  _subtitleWriter;
@@ -122,6 +123,8 @@ protected:
     VideoReceiver*  _videoReceiver          = nullptr;
     VideoReceiver*  _thermalVideoReceiver   = nullptr;
     VideoSettings*  _videoSettings          = nullptr;
+    QString         _videoUri;
+    QString         _thermalVideoUri;
     QString         _videoSourceID;
     bool            _fullScreen             = false;
     Vehicle*        _activeVehicle          = nullptr;
