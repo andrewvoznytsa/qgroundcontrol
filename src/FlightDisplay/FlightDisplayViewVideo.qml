@@ -40,7 +40,7 @@ Item {
         id:             noVideo
         anchors.fill:   parent
         color:          Qt.rgba(0,0,0,0.75)
-        visible:        !(_videoReceiver && _videoReceiver.videoRunning)
+        visible:        !(_videoReceiver && _videoReceiver.decoding)
         QGCLabel {
             text:               QGroundControl.settingsManager.videoSettings.streamEnabled.rawValue ? qsTr("WAITING FOR VIDEO") : qsTr("VIDEO DISABLED")
             font.family:        ScreenTools.demiboldFontFamily
@@ -58,7 +58,7 @@ Item {
     Rectangle {
         anchors.fill:   parent
         color:          "black"
-        visible:        _videoReceiver && _videoReceiver.videoRunning
+        visible:        _videoReceiver && _videoReceiver.decoding
         function getWidth() {
             //-- Fit Width or Stretch
             if(_fitMode === 0 || _fitMode === 2) {
@@ -130,7 +130,7 @@ Item {
             height:             parent.getHeight()
             width:              parent.getWidth()
             anchors.centerIn:   parent
-            visible:            _videoReceiver && _videoReceiver.videoRunning
+            visible:            _videoReceiver && _videoReceiver.decoding
             sourceComponent:    videoBackgroundComponent
 
             property bool videoDisabled: QGroundControl.settingsManager.videoSettings.videoSource.rawValue === QGroundControl.settingsManager.videoSettings.disabledVideoSource

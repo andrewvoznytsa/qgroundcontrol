@@ -122,6 +122,10 @@ protected:
     bool            _isTaisync              = false;
     VideoReceiver*  _videoReceiver          = nullptr;
     VideoReceiver*  _thermalVideoReceiver   = nullptr;
+#if defined(QGC_GST_STREAMING)
+    GstElement*     _videoSink              = nullptr;
+    GstElement*     _thermalVideoSink       = nullptr;
+#endif
     VideoSettings*  _videoSettings          = nullptr;
     QString         _videoUri;
     QString         _thermalVideoUri;

@@ -49,6 +49,17 @@ VideoManager::~VideoManager()
     _videoReceiver = nullptr;
     delete _thermalVideoReceiver;
     _thermalVideoReceiver = nullptr;
+#if defined(QGC_GST_STREAMING)
+    if (_thermalVideoSink != nullptr) {
+        gst_object_unref(_thermalVideoSink);
+        _thermalVideoSink = nullptr;
+    }
+
+    if (_videoSink != nullptr) {
+        gst_object_unref(_videoSink);
+        _videoSink = nullptr;
+    }
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -154,8 +165,19 @@ VideoManager::startVideo()
 
     const unsigned timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
 
-    if(_videoReceiver) _videoReceiver->start(_videoUri, timeout);
-    if(_thermalVideoReceiver) _thermalVideoReceiver->start(_thermalVideoUri, timeout);
+    if(_videoReceiver != nullptr) {
+        _videoReceiver->start(_videoUri, timeout);
+        if (_videoSink != nullptr) {
+            _videoReceiver->startDecoding(_videoSink);
+        }
+    }
+
+    if(_thermalVideoReceiver != nullptr) {
+        _thermalVideoReceiver->start(_thermalVideoUri, timeout);
+        if (_thermalVideoSink != nullptr) {
+            _thermalVideoReceiver->startDecoding(_thermalVideoSink);
+        }
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -412,7 +434,7 @@ VideoManager::_makeVideoSink(gpointer widget)
     if ((sink = gst_element_factory_make("qgcvideosinkbin", nullptr)) != nullptr) {
         g_object_set(sink, "widget", widget, NULL);
     } else {
-        qCritical() << "VideoManager::_makeVideoSink() failed. Error with gst_element_factory_make('qgcvideosinkbin')";
+        qCritical() << "gst_element_factory_make('qgcvideosinkbin') failed";
     }
 
     return sink;
@@ -427,24 +449,32 @@ VideoManager::_initVideo()
     QQuickItem* root = qgcApp()->mainRootWindow();
 
     if (root == nullptr) {
-        qCDebug(VideoManagerLog) << "VideoManager::_makeVideoSink() failed. No root window";
+        qCDebug(VideoManagerLog) << "mainRootWindow() failed. No root window";
         return;
     }
 
     QQuickItem* widget = root->findChild<QQuickItem*>("videoContent");
 
-    if (widget != nullptr) {
-        _videoReceiver->setVideoSink(_makeVideoSink(widget));
+    if (widget != nullptr && _videoReceiver != nullptr) {
+        if ((_videoSink = _makeVideoSink(widget)) != nullptr) {
+            _videoReceiver->startDecoding(_videoSink);
+        } else {
+            qCDebug(VideoManagerLog) << "_makeVideoSink() failed";
+        }
     } else {
-        qCDebug(VideoManagerLog) << "VideoManager::_makeVideoSink() failed. 'videoContent' widget not found";
+        qCDebug(VideoManagerLog) << "video receiver disabled";
     }
 
     widget = root->findChild<QQuickItem*>("thermalVideo");
 
-    if (widget != nullptr) {
-        _thermalVideoReceiver->setVideoSink(_makeVideoSink(widget));
+    if (widget != nullptr && _thermalVideoReceiver != nullptr) {
+        if ((_thermalVideoSink = _makeVideoSink(widget)) != nullptr) {
+            _thermalVideoReceiver->startDecoding(_thermalVideoSink);
+        } else {
+            qCDebug(VideoManagerLog) << "_makeVideoSink() failed";
+        }
     } else {
-        qCDebug(VideoManagerLog) << "VideoManager::_makeVideoSink() failed. 'thermalVideo' widget not found";
+        qCDebug(VideoManagerLog) << "thermal video receiver disabled";
     }
 #endif
 }
