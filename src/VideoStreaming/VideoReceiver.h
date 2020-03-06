@@ -123,8 +123,7 @@ protected:
     virtual bool _addDecoder(GstPad* pad);
     virtual bool _addVideoSink(GstPad* pad);
     virtual void _noteVideoSinkFrame(void);
-    virtual void _scheduleUnlink(GstElement* from);
-    virtual void _unlinkBranch(GstPad* src);
+    virtual void _unlinkBranch(GstElement* from);
     virtual void _shutdownDecodingBranch (void);
     virtual void _shutdownRecordingBranch(void);
     virtual void _shutdownPipeline(void);
@@ -140,7 +139,6 @@ private:
     static gboolean _autoplugQuery(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data);
     static GstPadProbeReturn _videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn _keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn _unlinkBranch(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
     bool                _running;
     bool                _starting;
@@ -150,8 +148,8 @@ private:
     bool                _stop;
     GstElement*         _source;
     GstElement*         _tee;
-    GstElement*         _decoderQueue;
-    GstElement*         _recorderQueue;
+    GstElement*         _decoderValve;
+    GstElement*         _recorderValve;
     GstElement*         _decoder;
     GstElement*         _videoSink;
     GstElement*         _fileSink;
