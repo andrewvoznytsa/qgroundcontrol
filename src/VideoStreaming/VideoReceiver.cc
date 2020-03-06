@@ -34,14 +34,12 @@ QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 //
 
 VideoReceiver::VideoReceiver(QObject* parent)
-    : QObject(parent)
+    : QThread(parent)
 #if defined(QGC_GST_STREAMING)
-    , _running(false)
     , _starting(false)
     , _stopping(false)
     , _removingDecoder(false)
     , _removingRecorder(false)
-    , _stop(true)
     , _source(nullptr)
     , _tee(nullptr)
     , _decoderValve(nullptr)
@@ -52,12 +50,14 @@ VideoReceiver::VideoReceiver(QObject* parent)
     , _pipeline(nullptr)
     , _lastFrameId(G_MAXUINT64)
     , _lastFrameTime(0)
+    , _videoSinkProbeId(0)
     , _restart_time_ms(1389)
     , _udpReconnect_us(5000000)
 #endif
     , _streaming(false)
     , _decoding(false)
     , _recording(false)
+    , _shutdown(false)
 {
 #if defined(QGC_GST_STREAMING)
     _restart_timer.setSingleShot(true);
@@ -65,32 +65,44 @@ VideoReceiver::VideoReceiver(QObject* parent)
     connect(&_frameTimer, &QTimer::timeout, this, &VideoReceiver::_updateTimer);
     _frameTimer.start(1000);
 #endif
+    QThread::start();
 }
 
 VideoReceiver::~VideoReceiver(void)
 {
     stop();
+    _post([this](){
+        _shutdown = true;
+    });
+    QThread::wait();
 }
 
 void
 VideoReceiver::start(const QString& uri, unsigned timeout)
 {
+#if defined(QGC_GST_STREAMING)
+    if (!_isOurThread()) {
+        _post([this, uri, timeout]() {
+            start(uri, timeout);
+        });
+        return;
+    }
+
+    if(_pipeline) {
+        qCDebug(VideoReceiverLog) << "Already running!";
+        return;
+    }
+
     if (uri.isEmpty()) {
         qCDebug(VideoReceiverLog) << "Failed because URI is not specified";
         return;
     }
 
-#if defined(QGC_GST_STREAMING)
-    _stop = false;
-
-    if(_running) {
-        qCDebug(VideoReceiverLog) << "Already running!";
-        return;
-    }
-
-    _timeout = timeout;
+    qCDebug(VideoReceiverLog) << "Starting";
 
     _starting = true;
+
+    _timeout = timeout;
 
     bool running    = false;
     bool pipelineUp = false;
@@ -174,7 +186,7 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
 
         // In newer versions, the pipeline will clean up all references that are added to it
         if (_pipeline != nullptr) {
-            gst_bin_remove(GST_BIN(_pipeline), _videoSink);
+            gst_element_set_state(_pipeline, GST_STATE_NULL);
             gst_object_unref(_pipeline);
             _pipeline = nullptr;
         }
@@ -211,13 +223,11 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
                 _source = nullptr;
             }
         }
-
-        _running = false;
     } else {
         GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-playing");
-        _running = true;
-        qCDebug(VideoReceiverLog) << "Running";
+        qCDebug(VideoReceiverLog) << "Started";
     }
+
     _starting = false;
 #endif
 }
@@ -226,26 +236,82 @@ void
 VideoReceiver::stop(void)
 {
 #if defined(QGC_GST_STREAMING)
-    _stop = true;
-    qCDebug(VideoReceiverLog) << "Stopping";
-    if(!_streaming) {
-        _shutdownPipeline();
-    } else if (_pipeline != nullptr && !_stopping) {
-        qCDebug(VideoReceiverLog) << "Stopping _pipeline";
-        GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(_pipeline));
-        gst_bus_disable_sync_message_emission(bus);
-        gst_element_send_event(_pipeline, gst_event_new_eos());
-        _stopping = true;
-        GstMessage* message = gst_bus_timed_pop_filtered(bus, GST_CLOCK_TIME_NONE, (GstMessageType)(GST_MESSAGE_EOS|GST_MESSAGE_ERROR));
-        gst_object_unref(bus);
-        if(GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
-            _shutdownPipeline();
-            qCCritical(VideoReceiverLog) << "Error stopping pipeline!";
-        } else if(GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS) {
-            _handleEOS();
-        }
-        gst_message_unref(message);
+    if (!_isOurThread()) {
+        _post([this]() {
+            stop();
+        });
+        return;
     }
+
+    if (_stopping) {
+        return;
+    }
+
+    qCDebug(VideoReceiverLog) << "Stopping";
+
+    if (_pipeline != nullptr) {
+        _stopping = true;
+
+        GstBus* bus;
+
+        if ((bus = gst_pipeline_get_bus(GST_PIPELINE(_pipeline))) != nullptr) {
+            gst_bus_disable_sync_message_emission(bus);
+
+            gst_element_send_event(_pipeline, gst_event_new_eos());
+
+            GstMessage* msg;
+
+            if((msg = gst_bus_timed_pop_filtered(bus, GST_CLOCK_TIME_NONE, (GstMessageType)(GST_MESSAGE_EOS|GST_MESSAGE_ERROR))) != nullptr) {
+                if(GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
+                    qCCritical(VideoReceiverLog) << "Error stopping pipeline!";
+                } else if(GST_MESSAGE_TYPE(msg) == GST_MESSAGE_EOS) {
+                    qCDebug(VideoReceiverLog) << "End of stream received!";
+                }
+
+                gst_message_unref(msg);
+                msg = nullptr;
+            } else {
+                qCCritical(VideoReceiverLog) << "gst_bus_timed_pop_filtered() failed";
+            }
+
+            gst_object_unref(bus);
+            bus = nullptr;
+        } else {
+            qCCritical(VideoReceiverLog) << "gst_pipeline_get_bus() failed";
+        }
+
+        gst_element_set_state(_pipeline, GST_STATE_NULL);
+
+        if (_fileSink != nullptr) {
+           _shutdownRecordingBranch();
+        }
+
+        if (_videoSink != nullptr) {
+            _shutdownDecodingBranch();
+        }
+
+        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-stopped");
+
+        gst_object_unref(_pipeline);
+        _pipeline = nullptr;
+
+        _recorderValve = nullptr;
+        _decoderValve = nullptr;
+        _tee = nullptr;
+        _source = nullptr;
+
+        _starting = false;
+
+        if (_streaming) {
+            _streaming = false;
+            emit streamingChanged();
+            qCDebug(VideoReceiverLog) << "Streaming stopped";
+        }
+
+        _stopping = false;
+    }
+
+    qCDebug(VideoReceiverLog) << "Stopped";
 #endif
 }
 
@@ -253,6 +319,15 @@ void
 VideoReceiver::startDecoding(VideoSink* videoSink)
 {
 #if defined(QGC_GST_STREAMING)
+    if (!_isOurThread()) {
+        gst_object_ref(videoSink);
+        _post([this, videoSink]() {
+            startDecoding(videoSink);
+            gst_object_unref(videoSink);
+        });
+        return;
+    }
+
     qCDebug(VideoReceiverLog) << "Starting decoding";
 
     if (_pipeline == nullptr) {
@@ -277,7 +352,7 @@ VideoReceiver::startDecoding(VideoSink* videoSink)
     _lastFrameId = G_MAXUINT64;
     _lastFrameTime = 0;
 
-    gst_pad_add_probe(pad, (GstPadProbeType)(GST_PAD_PROBE_TYPE_BUFFER), _videoSinkProbe, this, nullptr);
+    _videoSinkProbeId = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, _videoSinkProbe, this, nullptr);
     gst_object_unref(pad);
     pad = nullptr;
 
@@ -297,14 +372,14 @@ VideoReceiver::startDecoding(VideoSink* videoSink)
         return;
     }
 
-    _decoding = _addDecoder(srcpad);
+    const bool ret = _addDecoder(srcpad);
 
     gst_object_unref(srcpad);
     srcpad = nullptr;
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-decoding-start");
 
-    if (!_decoding) {
+    if (!ret) {
         qCCritical(VideoReceiverLog) << "_addDecoder() failed";
         return;
     }
@@ -321,6 +396,13 @@ void
 VideoReceiver::stopDecoding(void)
 {
 #if defined(QGC_GST_STREAMING)
+    if (!_isOurThread()) {
+        _post([this]() {
+            stopDecoding();
+        });
+        return;
+    }
+
     qCDebug(VideoReceiverLog) << "Stopping decoding";
 
     // exit immediately if we are not decoding
@@ -341,6 +423,13 @@ void
 VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
 {
 #if defined(QGC_GST_STREAMING)
+    if (!_isOurThread()) {
+        _post([this, videoFilePath, format]() {
+            startRecording(videoFilePath, format);
+        });
+        return;
+    }
+
     qCDebug(VideoReceiverLog) << "Starting recording";
 
     // exit immediately if we are already recording
@@ -376,9 +465,9 @@ VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
     // Install a probe on the recording branch to drop buffers until we hit our first keyframe
     // When we hit our first keyframe, we can offset the timestamps appropriately according to the first keyframe time
     // This will ensure the first frame is a keyframe at t=0, and decoding can begin immediately on playback
-    GstPad* probepad = gst_element_get_static_pad(_recorderValve, "src");
+    GstPad* probepad;
 
-    if (probepad == nullptr) {
+    if ((probepad  = gst_element_get_static_pad(_recorderValve, "src")) == nullptr) {
         qCCritical(VideoReceiverLog) << "gst_element_get_static_pad() failed";
         return;
     }
@@ -407,6 +496,13 @@ void
 VideoReceiver::stopRecording(void)
 {
 #if defined(QGC_GST_STREAMING)
+    if (!_isOurThread()) {
+        _post([this]() {
+            stopRecording();
+        });
+        return;
+    }
+
     qCDebug(VideoReceiverLog) << "Stopping recording";
 
     // exit immediately if we are not recording
@@ -424,13 +520,20 @@ VideoReceiver::stopRecording(void)
 }
 
 void
-VideoReceiver::grabImage(QString imageFile)
+VideoReceiver::grabImage(const QString& imageFile)
 {
-    _imageFile = imageFile;
 #if defined(QGC_GST_STREAMING)
+    if (!_isOurThread()) {
+        _post([this, imageFile]() {
+            grabImage(imageFile);
+        });
+        return;
+    }
+
+    _imageFile = imageFile;
     // FIXME: AV: schedule screenshot taking here
-#endif
     emit imageFileChanged();
+#endif
 }
 
 #if defined(QGC_GST_STREAMING)
@@ -477,41 +580,24 @@ VideoReceiver::_updateTimer(void)
 }
 
 void
-VideoReceiver::_handleError(void)
-{
-    qCDebug(VideoReceiverLog) << "Gstreamer error!";
-    stop();
-    _restart_timer.start(_restart_time_ms);
-}
-
-void
 VideoReceiver::_handleEOS(void)
 {
     if(_stopping) {
+        qCWarning(VideoReceiverLog) << "We should not be here";
+        return;
+    }
+
+    if (!_streaming) {
+        stop();
+    } else {
         if(_decoding && _removingDecoder) {
             _shutdownDecodingBranch();
-        }
-        if(_recording && _removingRecorder) {
+        } else if(_recording && _removingRecorder) {
             _shutdownRecordingBranch();
+        } else {
+            qCWarning(VideoReceiverLog) << "Unexpected EOS!";
+            stop();
         }
-        _shutdownPipeline();
-        qCDebug(VideoReceiverLog) << "Stopped";
-    } else if(_decoding && _removingDecoder) {
-        _shutdownDecodingBranch();
-    } else if(_recording && _removingRecorder) {
-        _shutdownRecordingBranch();
-    } else {
-        qCWarning(VideoReceiverLog) << "Unexpected EOS!";
-        _handleError();
-    }
-}
-
-void
-VideoReceiver::_handleStateChanged(void)
-{
-    if(_pipeline) {
-        //_streaming = GST_STATE(_pipeline) == GST_STATE_PLAYING;
-        //qCDebug(VideoReceiverLog) << "State changed, _streaming:" << _streaming;
     }
 }
 
@@ -773,6 +859,8 @@ VideoReceiver::_onNewSourcePad(GstPad* pad)
 
     _streaming = true;
 
+    gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, _eosProbe, this, nullptr);
+
     if (_videoSink == nullptr) {
         return;
     }
@@ -787,14 +875,14 @@ VideoReceiver::_onNewSourcePad(GstPad* pad)
         return;
     }
 
-    _decoding = _addDecoder(srcpad);
+    const bool ret = _addDecoder(srcpad);
 
     gst_object_unref(srcpad);
     srcpad = nullptr;
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-decoding-start");
 
-    if (!_decoding) {
+    if (!ret) {
         qCCritical(VideoReceiverLog) << "_addDecoder() failed";
         return;
     }
@@ -817,9 +905,9 @@ VideoReceiver::_onNewDecoderPad(GstPad* pad)
 bool
 VideoReceiver::_addDecoder(GstPad* pad)
 {
-    GstCaps* caps = gst_pad_query_caps(pad, nullptr);
+    GstCaps* caps;
 
-    if (!caps) {
+    if ((caps = gst_pad_query_caps(pad, nullptr)) == nullptr) {
         qCCritical(VideoReceiverLog) << "gst_pad_query_caps() failed";
         return false;
     }
@@ -830,6 +918,8 @@ VideoReceiver::_addDecoder(GstPad* pad)
         caps = nullptr;
         return false;
     }
+
+    gst_object_ref(_decoder);
 
     gst_caps_unref(caps);
     caps = nullptr;
@@ -856,9 +946,9 @@ VideoReceiver::_addVideoSink(GstPad* pad)
 {
     GstCaps* caps = gst_pad_query_caps(pad, nullptr);
 
-    gst_bin_add(GST_BIN(_pipeline), _videoSink);
+    gst_object_ref(_videoSink); // gst_bin_add() will steal one reference
 
-    gst_element_sync_state_with_parent(_videoSink);
+    gst_bin_add(GST_BIN(_pipeline), _videoSink);
 
     if(!gst_element_link(_decoder, _videoSink)) {
         gst_bin_remove(GST_BIN(_pipeline), _videoSink);
@@ -869,6 +959,8 @@ VideoReceiver::_addVideoSink(GstPad* pad)
         }
         return false;
     }
+
+    gst_element_sync_state_with_parent(_videoSink);
 
     if (caps != nullptr) {
         GstStructure* s = gst_caps_get_structure(caps, 0);
@@ -886,7 +978,6 @@ VideoReceiver::_addVideoSink(GstPad* pad)
         _setVideoSize(QSize(0, 0));
     }
 
-    // FIXME: AV: don't we signal decoding somewhere else?
     _decoding = true;
     emit decodingChanged();
 
@@ -897,6 +988,14 @@ void
 VideoReceiver::_noteVideoSinkFrame(void)
 {
     _lastFrameTime = QDateTime::currentSecsSinceEpoch();
+}
+
+void
+VideoReceiver::_noteEndOfStream(void)
+{
+    if (_streaming) {
+        _streaming = false;
+    }
 }
 
 // -Unlink the branch from the src pad
@@ -949,18 +1048,32 @@ void
 VideoReceiver::_shutdownDecodingBranch(void)
 {
     gst_bin_remove(GST_BIN(_pipeline), _decoder);
+    gst_element_set_state(_decoder, GST_STATE_NULL);
+    gst_object_unref(_decoder);
     _decoder = nullptr;
+
+    if (_videoSinkProbeId != 0) {
+        GstPad* sinkpad;
+        if ((sinkpad = gst_element_get_static_pad(_videoSink, "sink")) != nullptr) {
+            gst_pad_remove_probe(sinkpad, _videoSinkProbeId);
+            gst_object_unref(sinkpad);
+            sinkpad = nullptr;
+        }
+        _videoSinkProbeId = 0;
+    }
 
     gst_bin_remove(GST_BIN(_pipeline), _videoSink);
     gst_element_set_state(_videoSink, GST_STATE_NULL);
     gst_object_unref(_videoSink);
     _videoSink = nullptr;
 
-    _decoding = false;
+    _removingDecoder = false;
 
-    emit decodingChanged();
-
-    qCDebug(VideoReceiverLog) << "Decoding stopped";
+    if (_decoding) {
+        _decoding = false;
+        emit decodingChanged();
+        qCDebug(VideoReceiverLog) << "Decoding stopped";
+    }
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-decoding-stopped");
 }
@@ -973,44 +1086,47 @@ VideoReceiver::_shutdownRecordingBranch(void)
     gst_object_unref(_fileSink);
     _fileSink = nullptr;
 
-    _recording = false;
+    _removingRecorder = false;
 
-    emit recordingChanged();
-
-    qCDebug(VideoReceiverLog) << "Recording stopped";
+    if (_recording) {
+        _recording = false;
+        emit recordingChanged();
+        qCDebug(VideoReceiverLog) << "Recording stopped";
+    }
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-recording-stopped");
 }
 
-void
-VideoReceiver::_shutdownPipeline()
+bool
+VideoReceiver::_isOurThread(void)
 {
-    if(!_pipeline) {
-        qCDebug(VideoReceiverLog) << "No pipeline";
-        return;
+    return QThread::currentThread() == (QThread*)this;
+}
+
+void
+VideoReceiver::_post(Task t)
+{
+    QMutexLocker lock(&_taskQueueSync);
+    _taskQueue.enqueue(t);
+    _taskQueueUpdate.wakeOne();
+}
+
+void
+VideoReceiver::run(void)
+{
+    while(!_shutdown) {
+        _taskQueueSync.lock();
+
+        while (_taskQueue.isEmpty()) {
+            _taskQueueUpdate.wait(&_taskQueueSync);
+        }
+
+        Task t = _taskQueue.dequeue();
+
+        _taskQueueSync.unlock();
+
+        t();
     }
-    GstBus* bus = nullptr;
-    if ((bus = gst_pipeline_get_bus(GST_PIPELINE(_pipeline))) != nullptr) {
-        gst_bus_disable_sync_message_emission(bus);
-        gst_object_unref(bus);
-        bus = nullptr;
-    }
-    gst_element_set_state(_pipeline, GST_STATE_NULL);
-    gst_bin_remove(GST_BIN(_pipeline), _videoSink);
-    // FIXME: rework this crap
-    _decoding = false;
-    _decoder = nullptr;
-    _recorderValve = nullptr;
-    _decoderValve = nullptr;
-    _tee = nullptr;
-    _source = nullptr;
-    gst_object_unref(_pipeline);
-    _pipeline = nullptr;
-    _streaming = false;
-    _recording = false;
-    _stopping = false;
-    _running = false;
-    emit recordingChanged();
 }
 
 gboolean
@@ -1020,23 +1136,34 @@ VideoReceiver::_onBusMessage(GstBus* bus, GstMessage* msg, gpointer data)
     Q_ASSERT(msg != nullptr && data != nullptr);
     VideoReceiver* pThis = (VideoReceiver*)data;
 
-    switch(GST_MESSAGE_TYPE(msg)) {
+    switch (GST_MESSAGE_TYPE(msg)) {
     case GST_MESSAGE_ERROR:
         do {
             gchar* debug;
             GError* error;
+
             gst_message_parse_error(msg, &error, &debug);
-            g_free(debug);
-            qCCritical(VideoReceiverLog) << error->message;
-            g_error_free(error);
-            pThis->_handleError();
+
+            if (debug != nullptr) {
+                g_free(debug);
+                debug = nullptr;
+            }
+
+            if (error != nullptr) {
+                qCCritical(VideoReceiverLog) << error->message;
+                g_error_free(error);
+                error = nullptr;
+            }
+
+            pThis->_post([pThis](){
+                pThis->stop();
+            });
         } while(0);
         break;
     case GST_MESSAGE_EOS:
-        pThis->_handleEOS();
-        break;
-    case GST_MESSAGE_STATE_CHANGED:
-        pThis->_handleStateChanged();
+        pThis->_post([pThis](){
+            pThis->_handleEOS();
+        });
         break;
     case GST_MESSAGE_ELEMENT:
         do {
@@ -1055,7 +1182,9 @@ VideoReceiver::_onBusMessage(GstBus* bus, GstMessage* msg, gpointer data)
             }
 
             if (GST_MESSAGE_TYPE(forward_msg) == GST_MESSAGE_EOS) {
-                pThis->_handleEOS();
+                pThis->_post([pThis](){
+                    pThis->_handleEOS();
+                });
             }
 
             gst_message_unref(forward_msg);
@@ -1086,32 +1215,45 @@ VideoReceiver::_onNewPad(GstElement* element, GstPad* pad, gpointer data)
 void
 VideoReceiver::_wrapWithGhostPad(GstElement* element, GstPad* pad, gpointer data)
 {
-    gchar* name = gst_pad_get_name(pad);
+    gchar* name;
 
-    GstPad* ghostpad = gst_ghost_pad_new(name, pad);
+    if ((name = gst_pad_get_name(pad)) == nullptr) {
+        qCCritical(VideoReceiverLog) << "gst_pad_get_name() failed";
+        return;
+    }
+
+    GstPad* ghostpad;
+
+    if ((ghostpad = gst_ghost_pad_new(name, pad)) == nullptr) {
+        qCCritical(VideoReceiverLog) << "gst_ghost_pad_new() failed";
+        g_free(name);
+        name = nullptr;
+        return;
+    }
 
     g_free(name);
+    name = nullptr;
 
     gst_pad_set_active(ghostpad, TRUE);
 
     if (!gst_element_add_pad(GST_ELEMENT_PARENT(element), ghostpad)) {
-        qCCritical(VideoReceiverLog) << "Failed to add ghost pad to source";
+        qCCritical(VideoReceiverLog) << "gst_element_add_pad() failed";
     }
 }
 
 void
 VideoReceiver::_linkPadWithOptionalBuffer(GstElement* element, GstPad* pad, gpointer data)
 {
-    gboolean isRtpPad = FALSE;
+    bool isRtpPad = false;
 
-    GstCaps* filter = gst_caps_from_string("application/x-rtp");
+    GstCaps* filter;
 
-    if (filter != nullptr) {
+    if ((filter = gst_caps_from_string("application/x-rtp")) != nullptr) {
         GstCaps* caps = gst_pad_query_caps(pad, nullptr);
 
         if (caps != nullptr) {
             if (!gst_caps_is_any(caps) && gst_caps_can_intersect(caps, filter)) {
-                isRtpPad = TRUE;
+                isRtpPad = true;
             }
             gst_caps_unref(caps);
             caps = nullptr;
@@ -1151,11 +1293,11 @@ VideoReceiver::_linkPadWithOptionalBuffer(GstElement* element, GstPad* pad, gpoi
         }
     }
 
-    gchar* name = gst_pad_get_name(pad);
+    gchar* name;
 
-    if (name != nullptr) {
+    if ((name = gst_pad_get_name(pad)) != nullptr) {
         if(gst_element_link_pads(element, name, GST_ELEMENT(data), "sink") == false) {
-            qCCritical(VideoReceiverLog) << "Failed to link elements\n";
+            qCCritical(VideoReceiverLog) << "gst_element_link_pads() failed";
         }
 
         g_free(name);
@@ -1198,9 +1340,9 @@ VideoReceiver::_autoplugQueryCaps(GstElement* bin, GstPad* pad, GstElement* elem
 {
     GstElement* glupload = (GstElement* )data;
 
-    GstPad* sinkpad = gst_element_get_static_pad(glupload, "sink");
+    GstPad* sinkpad;
 
-    if (!sinkpad) {
+    if ((sinkpad = gst_element_get_static_pad(glupload, "sink")) == nullptr) {
         qCCritical(VideoReceiverLog) << "No sink pad found";
         return FALSE;
     }
@@ -1229,9 +1371,9 @@ VideoReceiver::_autoplugQueryContext(GstElement* bin, GstPad* pad, GstElement* e
 {
     GstElement* glsink = (GstElement* )data;
 
-    GstPad* sinkpad = gst_element_get_static_pad(glsink, "sink");
+    GstPad* sinkpad;
 
-    if (!sinkpad){
+    if ((sinkpad = gst_element_get_static_pad(glsink, "sink")) == nullptr){
         qCCritical(VideoReceiverLog) << "No sink pad found";
         return FALSE;
     }
@@ -1249,7 +1391,7 @@ VideoReceiver::_autoplugQuery(GstElement* bin, GstPad* pad, GstElement* element,
 {
     gboolean ret;
 
-    switch (GST_QUERY_TYPE (query)) {
+    switch (GST_QUERY_TYPE(query)) {
     case GST_QUERY_CAPS:
         ret = _autoplugQueryCaps(bin, pad, element, query, data);
         break;
@@ -1279,10 +1421,28 @@ VideoReceiver::_videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user
 }
 
 GstPadProbeReturn
+VideoReceiver::_eosProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
+{
+    Q_UNUSED(pad);
+    Q_ASSERT(user_data != nullptr);
+
+    if(info != nullptr) {
+        GstEvent* event = gst_pad_probe_info_get_event(info);
+
+        if (GST_EVENT_TYPE(event) == GST_EVENT_EOS) {
+            VideoReceiver* pThis = static_cast<VideoReceiver*>(user_data);
+            pThis->_noteEndOfStream();
+        }
+    }
+
+    return GST_PAD_PROBE_OK;
+}
+
+GstPadProbeReturn
 VideoReceiver::_keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
     if (info == nullptr || user_data == nullptr) {
-        qCCritical(VideoReceiverLog) << "Invalid arhuments";
+        qCCritical(VideoReceiverLog) << "Invalid arguments";
         return GST_PAD_PROBE_DROP;
     }
 

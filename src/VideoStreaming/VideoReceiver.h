@@ -20,6 +20,10 @@
 #include <QSize>
 #include <QTimer>
 #include <QTcpSocket>
+#include <QThread>
+#include <QWaitCondition>
+#include <QMutex>
+#include <QQueue>
 
 #if defined(QGC_GST_STREAMING)
 #include <gst/gst.h>
@@ -32,7 +36,7 @@ Q_DECLARE_LOGGING_CATEGORY(VideoReceiverLog)
 
 class VideoSettings;
 
-class VideoReceiver : public QObject
+class VideoReceiver : public QThread
 {
     Q_OBJECT
 
@@ -99,14 +103,12 @@ public slots:
     virtual void stopDecoding(void);
     virtual void startRecording(const QString& videoFile, FILE_FORMAT format);
     virtual void stopRecording(void);
-    virtual void grabImage(QString imageFile);
+    virtual void grabImage(const QString& imageFile);
 
 #if defined(QGC_GST_STREAMING)
 protected slots:
     virtual void _updateTimer(void);
-    virtual void _handleError(void);
     virtual void _handleEOS(void);
-    virtual void _handleStateChanged(void);
 
 protected:
     void _setVideoSize(const QSize& size) {
@@ -123,10 +125,15 @@ protected:
     virtual bool _addDecoder(GstPad* pad);
     virtual bool _addVideoSink(GstPad* pad);
     virtual void _noteVideoSinkFrame(void);
+    virtual void _noteEndOfStream(void);
     virtual void _unlinkBranch(GstElement* from);
     virtual void _shutdownDecodingBranch (void);
     virtual void _shutdownRecordingBranch(void);
-    virtual void _shutdownPipeline(void);
+
+    typedef std::function<void(void)> Task;
+    bool _isOurThread(void);
+    void _post(Task t);
+    void run(void);
 
 private:
     static gboolean _onBusMessage(GstBus* bus, GstMessage* message, gpointer user_data);
@@ -138,14 +145,13 @@ private:
     static gboolean _autoplugQueryContext(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data);
     static gboolean _autoplugQuery(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data);
     static GstPadProbeReturn _videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static GstPadProbeReturn _eosProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn _keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
-    bool                _running;
     bool                _starting;
     bool                _stopping;
     bool                _removingDecoder;
     bool                _removingRecorder;
-    bool                _stop;
     GstElement*         _source;
     GstElement*         _tee;
     GstElement*         _decoderValve;
@@ -157,6 +163,7 @@ private:
 
     guint64             _lastFrameId;
     qint64              _lastFrameTime;
+    gulong              _videoSinkProbeId;
 
     //-- Wait for Video Server to show up before starting
     QTimer              _frameTimer;
@@ -177,4 +184,8 @@ private:
     QString             _imageFile;
     QString             _videoFile;
     QSize               _videoSize;
+    QWaitCondition      _taskQueueUpdate;
+    QMutex              _taskQueueSync;
+    QQueue<Task>        _taskQueue;
+    bool                _shutdown;
 };

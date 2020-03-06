@@ -92,8 +92,6 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
     qCDebug(VideoManagerLog) << "New Video Source:" << videoSource;
     _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
     _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
-    _videoReceiver->moveToThread(qgcApp()->thread());
-    _thermalVideoReceiver->moveToThread(qgcApp()->thread());
 
     connect(_videoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
     connect(_thermalVideoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
