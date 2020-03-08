@@ -93,8 +93,8 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
     _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
     _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
 
-    connect(_videoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
-    connect(_thermalVideoReceiver, &VideoReceiver::restartTimeout, this, &VideoManager::restartVideo);
+    connect(_videoReceiver, &VideoReceiver::timeout, this, &VideoManager::restartVideo);
+    connect(_thermalVideoReceiver, &VideoReceiver::timeout, this, &VideoManager::restartVideo);
 
     _updateSettings();
     if(isGStreamer()) {

@@ -84,8 +84,7 @@ public:
     }
 
 signals:
-    // FIXME: AV: use streamingChanged() instead of restartTimeout()
-    void restartTimeout(void);
+    void timeout(void);
     void streamingChanged(void);
     void decodingChanged(void);
     void recordingChanged(void);
@@ -107,7 +106,7 @@ public slots:
 
 #if defined(QGC_GST_STREAMING)
 protected slots:
-    virtual void _updateTimer(void);
+    virtual void _watchdog(void);
     virtual void _handleEOS(void);
 
 protected:
@@ -124,6 +123,7 @@ protected:
     virtual void _onNewDecoderPad(GstPad* pad);
     virtual bool _addDecoder(GstPad* pad);
     virtual bool _addVideoSink(GstPad* pad);
+    virtual void _noteTeeFrame(void);
     virtual void _noteVideoSinkFrame(void);
     virtual void _noteEndOfStream(void);
     virtual void _unlinkBranch(GstElement* from);
@@ -144,12 +144,11 @@ private:
     static gboolean _autoplugQueryCaps(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data);
     static gboolean _autoplugQueryContext(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data);
     static gboolean _autoplugQuery(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data);
+    static GstPadProbeReturn _teeProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn _videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn _eosProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static GstPadProbeReturn _keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 
-    bool                _starting;
-    bool                _stopping;
     bool                _removingDecoder;
     bool                _removingRecorder;
     GstElement*         _source;
@@ -161,14 +160,11 @@ private:
     GstElement*         _fileSink;
     GstElement*         _pipeline;
 
-    guint64             _lastFrameId;
-    qint64              _lastFrameTime;
+    qint64              _lastSourceFrameTime;
+    qint64              _lastVideoFrameTime;
     gulong              _videoSinkProbeId;
 
-    //-- Wait for Video Server to show up before starting
-    QTimer              _frameTimer;
-    QTimer              _restart_timer;
-    int                 _restart_time_ms;
+    QTimer              _watchdogTimer;
 
     //-- RTSP UDP reconnect timeout
     uint64_t            _udpReconnect_us;
