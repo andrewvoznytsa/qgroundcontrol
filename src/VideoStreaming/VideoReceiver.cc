@@ -51,14 +51,14 @@ VideoReceiver::VideoReceiver(QObject* parent)
     , _resetVideoSink(true)
     , _videoSinkProbeId(0)
     , _udpReconnect_us(5000000)
+    , _shutdown(false)
 #endif
     , _streaming(false)
     , _decoding(false)
     , _recording(false)
-    , _shutdown(false)
 {
-    QThread::start();
 #if defined(QGC_GST_STREAMING)
+    QThread::start();
     connect(&_watchdogTimer, &QTimer::timeout, this, &VideoReceiver::_watchdog);
     _watchdogTimer.start(1000);
 #endif
@@ -66,11 +66,13 @@ VideoReceiver::VideoReceiver(QObject* parent)
 
 VideoReceiver::~VideoReceiver(void)
 {
+#if defined(QGC_GST_STREAMING)
     stop();
     _post([this](){
         _shutdown = true;
     });
     QThread::wait();
+#endif
 }
 
 void

@@ -34,8 +34,6 @@ typedef void VideoSink;
 
 Q_DECLARE_LOGGING_CATEGORY(VideoReceiverLog)
 
-class VideoSettings;
-
 class VideoReceiver : public QThread
 {
     Q_OBJECT
@@ -55,9 +53,9 @@ public:
     Q_PROPERTY(bool     streaming   READ    streaming   NOTIFY  streamingChanged)
     Q_PROPERTY(bool     decoding    READ    decoding    NOTIFY  decodingChanged)
     Q_PROPERTY(bool     recording   READ    recording   NOTIFY  recordingChanged)
+    Q_PROPERTY(QSize    videoSize   READ    videoSize   NOTIFY  videoSizeChanged)
     Q_PROPERTY(QString  imageFile   READ    imageFile   NOTIFY  imageFileChanged)
     Q_PROPERTY(QString  videoFile   READ    videoFile   NOTIFY  videoFileChanged)
-    Q_PROPERTY(QSize    videoSize   READ    videoSize   NOTIFY  videoSizeChanged)
 
     bool streaming(void) {
         return _streaming;
@@ -71,6 +69,11 @@ public:
         return _recording;
     }
 
+    QSize videoSize(void) {
+        const quint32 size = _videoSize;
+        return QSize((size >> 16) & 0xFFFF, size & 0xFFFF);
+    }
+
     QString imageFile(void) {
         return _imageFile;
     }
@@ -79,18 +82,14 @@ public:
         return _videoFile;
     }
 
-    QSize videoSize(void) {
-        return _videoSize;
-    }
-
 signals:
     void timeout(void);
     void streamingChanged(void);
     void decodingChanged(void);
     void recordingChanged(void);
+    void videoSizeChanged(void);
     void imageFileChanged(void);
     void videoFileChanged(void);
-    void videoSizeChanged(void);
 
     // FIXME: to be removed and replaced by recordingChanged()
     void gotFirstRecordingKeyFrame(void);
@@ -111,7 +110,7 @@ protected slots:
 
 protected:
     void _setVideoSize(const QSize& size) {
-        _videoSize = size;
+        _videoSize = (size.width() << 16) | size.height();
         emit videoSizeChanged();
     }
 
@@ -172,17 +171,18 @@ private:
 
     unsigned            _timeout;
 
-    static const char*  _kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN];
-#endif
-
-    bool                _streaming;
-    bool                _decoding;
-    bool                _recording;
-    QString             _imageFile;
-    QString             _videoFile;
-    QSize               _videoSize;
     QWaitCondition      _taskQueueUpdate;
     QMutex              _taskQueueSync;
     QQueue<Task>        _taskQueue;
     bool                _shutdown;
+
+    static const char*  _kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN];
+#endif
+
+    std::atomic<bool>   _streaming;
+    std::atomic<bool>   _decoding;
+    std::atomic<bool>   _recording;
+    std::atomic<quint32>_videoSize;
+    QString             _imageFile;
+    QString             _videoFile;
 };
