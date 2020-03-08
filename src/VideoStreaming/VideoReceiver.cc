@@ -438,7 +438,7 @@ VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
     gst_bin_add(GST_BIN(_pipeline), _fileSink);
 
     if (!gst_element_link(_recorderValve, _fileSink)) {
-        qCCritical(VideoReceiverLog) << "Failed to link queue and file sink";
+        qCCritical(VideoReceiverLog) << "Failed to link valve and file sink";
         return;
     }
 
@@ -594,6 +594,7 @@ VideoReceiver::_makeSource(const QString& uri)
 
     GstElement* source  = nullptr;
     GstElement* buffer  = nullptr;
+    GstElement* tsdemux = nullptr;
     GstElement* parser  = nullptr;
     GstElement* bin     = nullptr;
     GstElement* srcbin  = nullptr;
@@ -642,25 +643,36 @@ VideoReceiver::_makeSource(const QString& uri)
             break;
         }
 
-        // FIXME: AV: Android does not determine MPEG2-TS via parsebin - have to explicitly state which demux to use
-        if (isTcpMPEGTS || isUdpMPEGTS) {
-            if ((parser = gst_element_factory_make("tsdemux", "parser")) == nullptr) {
-                qCCritical(VideoReceiverLog) << "gst_element_factory_make('tsdemux') failed";
-                break;
-            }
-        } else {
-            if ((parser = gst_element_factory_make("parsebin", "parser")) == nullptr) {
-                qCCritical(VideoReceiverLog) << "gst_element_factory_make('parsebin') failed";
-                break;
-            }
-        }
-
         if ((bin = gst_bin_new("sourcebin")) == nullptr) {
             qCCritical(VideoReceiverLog) << "gst_bin_new('sourcebin') failed";
             break;
         }
 
+        if ((parser = gst_element_factory_make("parsebin", "parser")) == nullptr) {
+            qCCritical(VideoReceiverLog) << "gst_element_factory_make('parsebin') failed";
+            break;
+        }
+
         gst_bin_add_many(GST_BIN(bin), source, parser, nullptr);
+
+        // FIXME: AV: Android does not determine MPEG2-TS via parsebin - have to explicitly state which demux to use
+        // FIXME: AV: tsdemux handling is a bit ugly - let's try to find elegant solution for that later
+        if (isTcpMPEGTS || isUdpMPEGTS) {
+            if ((tsdemux = gst_element_factory_make("tsdemux", nullptr)) == nullptr) {
+                qCCritical(VideoReceiverLog) << "gst_element_factory_make('tsdemux') failed";
+                break;
+            }
+
+            gst_bin_add(GST_BIN(bin), tsdemux);
+
+            if (!gst_element_link(source, tsdemux)) {
+                qCCritical(VideoReceiverLog) << "gst_element_link() failed";
+                break;
+            }
+
+            source = tsdemux;
+            tsdemux = nullptr;
+        }
 
         int probeRes = 0;
 
@@ -691,7 +703,7 @@ VideoReceiver::_makeSource(const QString& uri)
 
         g_signal_connect(parser, "pad-added", G_CALLBACK(_wrapWithGhostPad), nullptr);
 
-        source = buffer = parser = nullptr;
+        source = tsdemux = buffer = parser = nullptr;
 
         srcbin = bin;
         bin = nullptr;
@@ -705,6 +717,11 @@ VideoReceiver::_makeSource(const QString& uri)
     if (parser != nullptr) {
         gst_object_unref(parser);
         parser = nullptr;
+    }
+
+    if (tsdemux != nullptr) {
+        gst_object_unref(tsdemux);
+        tsdemux = nullptr;
     }
 
     if (buffer != nullptr) {
