@@ -48,6 +48,7 @@ VideoReceiver::VideoReceiver(QObject* parent)
     , _pipeline(nullptr)
     , _lastSourceFrameTime(0)
     , _lastVideoFrameTime(0)
+    , _resetVideoSink(true)
     , _videoSinkProbeId(0)
     , _udpReconnect_us(5000000)
 #endif
@@ -347,6 +348,7 @@ VideoReceiver::startDecoding(VideoSink* videoSink)
     }
 
     _lastVideoFrameTime = 0;
+    _resetVideoSink = true;
 
     _videoSinkProbeId = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, _videoSinkProbe, this, nullptr);
     gst_object_unref(pad);
@@ -1441,11 +1443,36 @@ VideoReceiver::_teeProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 GstPadProbeReturn
 VideoReceiver::_videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
-    Q_UNUSED(pad);
-    Q_UNUSED(info)
-
     if(user_data != nullptr) {
         VideoReceiver* pThis = static_cast<VideoReceiver*>(user_data);
+
+        if (pThis->_resetVideoSink) {
+            pThis->_resetVideoSink = false;
+
+// FIXME: AV: this makes MPEG2-TS playing smooth but breaks RTSP
+//            gst_pad_send_event(pad, gst_event_new_flush_start());
+//            gst_pad_send_event(pad, gst_event_new_flush_stop(TRUE));
+
+//            GstBuffer* buf;
+
+//            if ((buf = gst_pad_probe_info_get_buffer(info)) != nullptr) {
+//                GstSegment* seg;
+
+//                if ((seg = gst_segment_new()) != nullptr) {
+//                    gst_segment_init(seg, GST_FORMAT_TIME);
+
+//                    seg->start = buf->pts;
+
+//                    gst_pad_send_event(pad, gst_event_new_segment(seg));
+
+//                    gst_segment_free(seg);
+//                    seg = nullptr;
+//                }
+
+//                gst_pad_set_offset(pad, -static_cast<gint64>(buf->pts));
+//            }
+        }
+
         pThis->_noteVideoSinkFrame();
     }
 

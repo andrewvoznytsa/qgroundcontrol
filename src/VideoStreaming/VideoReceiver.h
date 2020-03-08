@@ -162,6 +162,7 @@ private:
 
     qint64              _lastSourceFrameTime;
     qint64              _lastVideoFrameTime;
+    bool                _resetVideoSink;
     gulong              _videoSinkProbeId;
 
     QTimer              _watchdogTimer;
