@@ -121,7 +121,7 @@ protected:
 
     virtual void _onNewSourcePad(GstPad* pad);
     virtual void _onNewDecoderPad(GstPad* pad);
-    virtual bool _addDecoder(GstPad* pad);
+    virtual bool _addDecoder(GstElement* src);
     virtual bool _addVideoSink(GstPad* pad);
     virtual void _noteTeeFrame(void);
     virtual void _noteVideoSinkFrame(void);

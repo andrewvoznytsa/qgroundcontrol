@@ -183,7 +183,7 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
             bus = nullptr;
         }
 
-        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-paused");
+        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-initial");
         running = gst_element_set_state(_pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE;
     } while(0);
 
@@ -230,7 +230,7 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
             }
         }
     } else {
-        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-playing");
+        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-started");
         qCDebug(VideoReceiverLog) << "Started";
     }
 #endif
@@ -361,21 +361,7 @@ VideoReceiver::startDecoding(VideoSink* videoSink)
         return;
     }
 
-    GstPad* srcpad;
-
-    if ((srcpad = gst_element_get_static_pad(_decoderValve, "src")) == nullptr) {
-        qCCritical(VideoReceiverLog) << "gst_element_get_static_pad() failed";
-        return;
-    }
-
-    const bool ret = _addDecoder(srcpad);
-
-    gst_object_unref(srcpad);
-    srcpad = nullptr;
-
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-decoding-start");
-
-    if (!ret) {
+    if (!_addDecoder(_decoderValve)) {
         qCCritical(VideoReceiverLog) << "_addDecoder() failed";
         return;
     }
@@ -458,6 +444,8 @@ VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
 
     gst_element_sync_state_with_parent(_fileSink);
 
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-with-filesink");
+
     // Install a probe on the recording branch to drop buffers until we hit our first keyframe
     // When we hit our first keyframe, we can offset the timestamps appropriately according to the first keyframe time
     // This will ensure the first frame is a keyframe at t=0, and decoding can begin immediately on playback
@@ -475,8 +463,6 @@ VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
     g_object_set(_recorderValve, "drop", FALSE, nullptr);
 
     _recording = true;
-
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-recording-start");
 
     emit recordingChanged();
 
@@ -855,24 +841,9 @@ VideoReceiver::_onNewSourcePad(GstPad* pad)
         return;
     }
 
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-new-source-pad");
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-with-new-source-pad");
 
-    // FIXME: code below should be part of _addDecoder()
-    GstPad* srcpad;
-
-    if ((srcpad = gst_element_get_static_pad(_decoderValve, "src")) == nullptr) {
-        qCCritical(VideoReceiverLog) << "gst_element_get_static_pad() failed";
-        return;
-    }
-
-    const bool ret = _addDecoder(srcpad);
-
-    gst_object_unref(srcpad);
-    srcpad = nullptr;
-
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-decoding-start");
-
-    if (!ret) {
+    if (!_addDecoder(_decoderValve)) {
         qCCritical(VideoReceiverLog) << "_addDecoder() failed";
         return;
     }
@@ -885,22 +856,34 @@ VideoReceiver::_onNewSourcePad(GstPad* pad)
 void
 VideoReceiver::_onNewDecoderPad(GstPad* pad)
 {
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-with-new-decoder-pad");
+
     if (!_addVideoSink(pad)) {
         qCCritical(VideoReceiverLog) << "_addVideoSink() failed";
     }
-
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-new-decoder-pad");
 }
 
 bool
-VideoReceiver::_addDecoder(GstPad* pad)
+VideoReceiver::_addDecoder(GstElement* src)
 {
-    GstCaps* caps;
+    GstPad* srcpad;
 
-    if ((caps = gst_pad_query_caps(pad, nullptr)) == nullptr) {
-        qCCritical(VideoReceiverLog) << "gst_pad_query_caps() failed";
+    if ((srcpad = gst_element_get_static_pad(src, "src")) == nullptr) {
+        qCCritical(VideoReceiverLog) << "gst_element_get_static_pad() failed";
         return false;
     }
+
+    GstCaps* caps;
+
+    if ((caps = gst_pad_query_caps(srcpad, nullptr)) == nullptr) {
+        qCCritical(VideoReceiverLog) << "gst_pad_query_caps() failed";
+        gst_object_unref(srcpad);
+        srcpad = nullptr;
+        return false;
+    }
+
+    gst_object_unref(srcpad);
+    srcpad = nullptr;
 
     if ((_decoder = _makeDecoder(caps, _videoSink)) == nullptr) {
         qCCritical(VideoReceiverLog) << "_makeDecoder() failed";
@@ -923,7 +906,9 @@ VideoReceiver::_addDecoder(GstPad* pad)
 
     gst_element_sync_state_with_parent(_decoder);
 
-    if (!gst_element_link(_decoderValve, _decoder)) {
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-with-decoder");
+
+    if (!gst_element_link(src, _decoder)) {
         qCCritical(VideoReceiverLog) << "Unable to link decoder";
         return false;
     }
@@ -951,6 +936,8 @@ VideoReceiver::_addVideoSink(GstPad* pad)
     }
 
     gst_element_sync_state_with_parent(_videoSink);
+
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-with-videosink");
 
     if (caps != nullptr) {
         GstStructure* s = gst_caps_get_structure(caps, 0);
@@ -1043,10 +1030,19 @@ VideoReceiver::_unlinkBranch(GstElement* from)
 void
 VideoReceiver::_shutdownDecodingBranch(void)
 {
-    gst_bin_remove(GST_BIN(_pipeline), _decoder);
-    gst_element_set_state(_decoder, GST_STATE_NULL);
-    gst_object_unref(_decoder);
-    _decoder = nullptr;
+    if (_decoder != nullptr) {
+        GstObject* parent;
+
+        if ((parent = gst_element_get_parent(_decoder)) != nullptr) {
+            gst_bin_remove(GST_BIN(_pipeline), _decoder);
+            gst_element_set_state(_decoder, GST_STATE_NULL);
+            gst_object_unref(parent);
+            parent = nullptr;
+        }
+
+        gst_object_unref(_decoder);
+        _decoder = nullptr;
+    }
 
     if (_videoSinkProbeId != 0) {
         GstPad* sinkpad;
@@ -1060,8 +1056,15 @@ VideoReceiver::_shutdownDecodingBranch(void)
 
     _lastVideoFrameTime = 0;
 
-    gst_bin_remove(GST_BIN(_pipeline), _videoSink);
-    gst_element_set_state(_videoSink, GST_STATE_NULL);
+    GstObject* parent;
+
+    if ((parent = gst_element_get_parent(_videoSink)) != nullptr) {
+        gst_bin_remove(GST_BIN(_pipeline), _videoSink);
+        gst_element_set_state(_videoSink, GST_STATE_NULL);
+        gst_object_unref(parent);
+        parent = nullptr;
+    }
+
     gst_object_unref(_videoSink);
     _videoSink = nullptr;
 
