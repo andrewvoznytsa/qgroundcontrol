@@ -95,13 +95,15 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
 
     connect(_videoReceiver, &VideoReceiver::timeout, this, &VideoManager::_restartVideo);
     connect(_videoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
+    connect(_videoReceiver, &VideoReceiver::recordingStarted, this,  &VideoManager::_recordingStarted);
+    connect(_videoReceiver, &VideoReceiver::recordingChanged, this,  &VideoManager::_recordingChanged);
+
     connect(_thermalVideoReceiver, &VideoReceiver::timeout, this, &VideoManager::_restartVideo);
     connect(_thermalVideoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
 
     _updateSettings();
     if(isGStreamer()) {
         startVideo();
-        _subtitleWriter.setVideoReceiver(_videoReceiver);
     } else {
         stopVideo();
     }
@@ -221,11 +223,11 @@ VideoManager::startRecording(const QString& videoFile)
         return;
     }
 
-    QString videoFilePath = savePath + "/"
+    _videoFile = savePath + "/"
             + (videoFile.isEmpty() ? QDateTime::currentDateTime().toString("yyyy-MM-dd_hh.mm.ss") : videoFile)
             + "." + kFileExtension[fileFormat - VideoReceiver::FILE_FORMAT_MIN];
 
-    _videoReceiver->startRecording(videoFilePath, fileFormat);
+    _videoReceiver->startRecording(_videoFile, fileFormat);
 }
 
 void
@@ -579,8 +581,11 @@ void
 VideoManager::_streamingChanged()
 {
 #if defined(QGC_GST_STREAMING)
+    // FIXME: AV: we need VideoReceiver::running() to avoid restarting if one of streams is not active
+    // but since VideoManager is going to be relpaced by Video Model during multiple video streaming development activity
+    // I'll leave it as is for week or two
     if ((_videoReceiver && !_videoReceiver->streaming())
-            || (_thermalVideoReceiver && !_thermalVideoReceiver->streaming())) {
+            /*|| (_thermalVideoReceiver && !_thermalVideoReceiver->streaming())*/) {
         _restartVideo();
     }
 #endif
@@ -597,6 +602,22 @@ VideoManager::_restartVideo()
     startVideo();
     emit aspectRatioChanged();
 #endif
+}
+
+//-----------------------------------------------------------------------------
+void
+VideoManager::_recordingStarted()
+{
+    _subtitleWriter.startCapturingTelemetry(_videoFile);
+}
+
+//-----------------------------------------------------------------------------
+void
+VideoManager::_recordingChanged()
+{
+    if (_videoReceiver && !_videoReceiver->recording()) {
+        _subtitleWriter.stopCapturingTelemetry();
+    }
 }
 
 //----------------------------------------------------------------------------------------

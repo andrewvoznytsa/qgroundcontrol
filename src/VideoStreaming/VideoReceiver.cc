@@ -406,12 +406,12 @@ VideoReceiver::stopDecoding(void)
 }
 
 void
-VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
+VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
 {
 #if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
-        _post([this, videoFilePath, format]() {
-            startRecording(videoFilePath, format);
+        _post([this, videoFile, format]() {
+            startRecording(videoFile, format);
         });
         return;
     }
@@ -424,13 +424,9 @@ VideoReceiver::startRecording(const QString& videoFilePath, FILE_FORMAT format)
         return;
     }
 
-    _videoFile = videoFilePath;
+    qCDebug(VideoReceiverLog) << "New video file:" << videoFile;
 
-    qCDebug(VideoReceiverLog) << "New video file:" << _videoFile;
-
-    emit videoFileChanged();
-
-    if ((_fileSink = _makeFileSink(_videoFile, format)) == nullptr) {
+    if ((_fileSink = _makeFileSink(videoFile, format)) == nullptr) {
         qCCritical(VideoReceiverLog) << "_makeFileSink() failed";
         return;
     }
@@ -1524,7 +1520,7 @@ VideoReceiver::_keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_
 
     qCDebug(VideoReceiverLog) << "Got keyframe, stop dropping buffers";
 
-    pThis->gotFirstRecordingKeyFrame();
+    pThis->recordingStarted();
 
     return GST_PAD_PROBE_REMOVE;
 }

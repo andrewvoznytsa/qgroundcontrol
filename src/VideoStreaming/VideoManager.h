@@ -117,8 +117,11 @@ protected:
     void _cleanupOldVideos          ();
     void _restartVideo              ();
     void _streamingChanged          ();
+    void _recordingStarted          ();
+    void _recordingChanged          ();
 
 protected:
+    QString         _videoFile;
     SubtitleWriter  _subtitleWriter;
     bool            _isTaisync              = false;
     VideoReceiver*  _videoReceiver          = nullptr;

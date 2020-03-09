@@ -55,7 +55,6 @@ public:
     Q_PROPERTY(bool     recording   READ    recording   NOTIFY  recordingChanged)
     Q_PROPERTY(QSize    videoSize   READ    videoSize   NOTIFY  videoSizeChanged)
     Q_PROPERTY(QString  imageFile   READ    imageFile   NOTIFY  imageFileChanged)
-    Q_PROPERTY(QString  videoFile   READ    videoFile   NOTIFY  videoFileChanged)
 
     bool streaming(void) {
         return _streaming;
@@ -78,21 +77,14 @@ public:
         return _imageFile;
     }
 
-    QString videoFile(void) {
-        return _videoFile;
-    }
-
 signals:
     void timeout(void);
     void streamingChanged(void);
     void decodingChanged(void);
     void recordingChanged(void);
+    void recordingStarted(void);
     void videoSizeChanged(void);
     void imageFileChanged(void);
-    void videoFileChanged(void);
-
-    // FIXME: to be removed and replaced by recordingChanged()
-    void gotFirstRecordingKeyFrame(void);
 
 public slots:
     virtual void start(const QString& uri, unsigned timeout);
@@ -110,7 +102,7 @@ protected slots:
 
 protected:
     void _setVideoSize(const QSize& size) {
-        _videoSize = (size.width() << 16) | size.height();
+        _videoSize = ((quint32)size.width() << 16) | (quint32)size.height();
         emit videoSizeChanged();
     }
 
@@ -184,5 +176,4 @@ private:
     std::atomic<bool>   _recording;
     std::atomic<quint32>_videoSize;
     QString             _imageFile;
-    QString             _videoFile;
 };
