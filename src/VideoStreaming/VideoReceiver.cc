@@ -854,7 +854,11 @@ VideoReceiver::_onNewSourcePad(GstPad* pad)
         return;
     }
 
-    _streaming = true;
+    if (!_streaming) {
+        _streaming = true;
+        qCDebug(VideoReceiverLog) << "Streaming started";
+        emit streamingChanged();
+    }
 
     gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, _eosProbe, this, nullptr);
 

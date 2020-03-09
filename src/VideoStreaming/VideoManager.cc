@@ -93,8 +93,10 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
     _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
     _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
 
-    connect(_videoReceiver, &VideoReceiver::timeout, this, &VideoManager::restartVideo);
-    connect(_thermalVideoReceiver, &VideoReceiver::timeout, this, &VideoManager::restartVideo);
+    connect(_videoReceiver, &VideoReceiver::timeout, this, &VideoManager::_restartVideo);
+    connect(_videoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
+    connect(_thermalVideoReceiver, &VideoReceiver::timeout, this, &VideoManager::_restartVideo);
+    connect(_thermalVideoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
 
     _updateSettings();
     if(isGStreamer()) {
@@ -346,28 +348,28 @@ VideoManager::_videoSourceChanged()
     emit hasVideoChanged();
     emit isGStreamerChanged();
     emit isAutoStreamChanged();
-    restartVideo();
+    _restartVideo();
 }
 
 //-----------------------------------------------------------------------------
 void
 VideoManager::_udpPortChanged()
 {
-    restartVideo();
+    _restartVideo();
 }
 
 //-----------------------------------------------------------------------------
 void
 VideoManager::_rtspUrlChanged()
 {
-    restartVideo();
+    _restartVideo();
 }
 
 //-----------------------------------------------------------------------------
 void
 VideoManager::_tcpUrlChanged()
 {
-    restartVideo();
+    _restartVideo();
 }
 
 //-----------------------------------------------------------------------------
@@ -574,7 +576,19 @@ VideoManager::_setThermalVideoUri(const QString& uri)
 
 //-----------------------------------------------------------------------------
 void
-VideoManager::restartVideo()
+VideoManager::_streamingChanged()
+{
+#if defined(QGC_GST_STREAMING)
+    if ((_videoReceiver && !_videoReceiver->streaming())
+            || (_thermalVideoReceiver && !_thermalVideoReceiver->streaming())) {
+        _restartVideo();
+    }
+#endif
+}
+
+//-----------------------------------------------------------------------------
+void
+VideoManager::_restartVideo()
 {
 #if defined(QGC_GST_STREAMING)
     qCDebug(VideoManagerLog) << "Restart video streaming";
@@ -596,14 +610,14 @@ VideoManager::_setActiveVehicle(Vehicle* vehicle)
             if(pCamera) {
                 pCamera->stopStream();
             }
-            disconnect(_activeVehicle->dynamicCameras(), &QGCCameraManager::streamChanged, this, &VideoManager::restartVideo);
+            disconnect(_activeVehicle->dynamicCameras(), &QGCCameraManager::streamChanged, this, &VideoManager::_restartVideo);
         }
     }
     _activeVehicle = vehicle;
     if(_activeVehicle) {
         connect(_activeVehicle, &Vehicle::connectionLostChanged, this, &VideoManager::_connectionLostChanged);
         if(_activeVehicle->dynamicCameras()) {
-            connect(_activeVehicle->dynamicCameras(), &QGCCameraManager::streamChanged, this, &VideoManager::restartVideo);
+            connect(_activeVehicle->dynamicCameras(), &QGCCameraManager::streamChanged, this, &VideoManager::_restartVideo);
             QGCCameraControl* pCamera = _activeVehicle->dynamicCameras()->currentCameraInstance();
             if(pCamera) {
                 pCamera->resumeStream();
@@ -614,7 +628,7 @@ VideoManager::_setActiveVehicle(Vehicle* vehicle)
         setfullScreen(false);
     }
     emit autoStreamConfiguredChanged();
-    restartVideo();
+    _restartVideo();
 }
 
 //----------------------------------------------------------------------------------------

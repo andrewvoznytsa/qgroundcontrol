@@ -62,7 +62,6 @@ public:
     virtual double      thermalHfov         ();
     virtual bool        autoStreamConfigured();
     virtual bool        hasThermal          ();
-    virtual void        restartVideo        ();
 
     virtual VideoReceiver*  videoReceiver           () { return _videoReceiver; }
     virtual VideoReceiver*  thermalVideoReceiver    () { return _thermalVideoReceiver; }
@@ -116,6 +115,8 @@ protected:
     void _setVideoUri               (const QString& uri);
     void _setThermalVideoUri        (const QString& uri);
     void _cleanupOldVideos          ();
+    void _restartVideo              ();
+    void _streamingChanged          ();
 
 protected:
     SubtitleWriter  _subtitleWriter;
