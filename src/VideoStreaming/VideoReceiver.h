@@ -164,6 +164,8 @@ private:
     bool                _shutdown;
 
     static const char*  _kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN];
+#else
+private:
 #endif
 
     std::atomic<bool>   _streaming;

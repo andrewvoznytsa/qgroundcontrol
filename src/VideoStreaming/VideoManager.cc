@@ -168,6 +168,7 @@ VideoManager::startVideo()
         return;
     }
 
+#if defined(QGC_GST_STREAMING)
     const unsigned timeout = _videoSettings->rtspTimeout()->rawValue().toUInt();
 
     if(_videoReceiver != nullptr) {
@@ -183,6 +184,7 @@ VideoManager::startVideo()
             _thermalVideoReceiver->startDecoding(_thermalVideoSink);
         }
     }
+#endif
 }
 
 //-----------------------------------------------------------------------------

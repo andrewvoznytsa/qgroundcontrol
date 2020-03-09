@@ -236,6 +236,9 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
         GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-started");
         qCDebug(VideoReceiverLog) << "Started";
     }
+#else
+    Q_UNUSED(uri);
+    Q_UNUSED(timeout);
 #endif
 }
 
@@ -468,7 +471,7 @@ VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
 
     qCDebug(VideoReceiverLog) << "Recording started";
 #else
-    Q_UNUSED(videoFilePath)
+    Q_UNUSED(videoFile)
     Q_UNUSED(format)
 #endif
 }
@@ -514,6 +517,8 @@ VideoReceiver::takeScreenshot(const QString& imageFile)
 
     // FIXME: AV: record screenshot here
     emit screenshotComplete();
+#else
+    Q_UNUSED(imageFile);
 #endif
 }
 
