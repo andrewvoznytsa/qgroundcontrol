@@ -86,7 +86,7 @@ Item {
                     target:         _videoReceiver
                     onImageFileChanged: {
                         videoContent.grabToImage(function(result) {
-                            if (!result.saveToFile(_videoReceiver.imageFile)) {
+                            if (!result.saveToFile(QGroundControl.videoManager.imageFile)) {
                                 console.error('Error capturing video frame');
                             }
                         });

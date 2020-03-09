@@ -502,19 +502,18 @@ VideoReceiver::stopRecording(void)
 }
 
 void
-VideoReceiver::grabImage(const QString& imageFile)
+VideoReceiver::takeScreenshot(const QString& imageFile)
 {
 #if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this, imageFile]() {
-            grabImage(imageFile);
+            takeScreenshot(imageFile);
         });
         return;
     }
 
-    _imageFile = imageFile;
-    // FIXME: AV: schedule screenshot taking here
-    emit imageFileChanged();
+    // FIXME: AV: record screenshot here
+    emit screenshotComplete();
 #endif
 }
 

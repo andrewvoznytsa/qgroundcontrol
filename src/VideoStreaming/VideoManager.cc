@@ -97,7 +97,10 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
     connect(_videoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
     connect(_videoReceiver, &VideoReceiver::recordingStarted, this,  &VideoManager::_recordingStarted);
     connect(_videoReceiver, &VideoReceiver::recordingChanged, this,  &VideoManager::_recordingChanged);
+    connect(_videoReceiver, &VideoReceiver::screenshotComplete, this,  &VideoManager::_screenshotComplete);
 
+    // FIXME: AV: I believe _thermalVideoReceiver should be handled just like _videoReceiver in terms of event
+    // and I expect that it will be changed during multiple video stream activity
     connect(_thermalVideoReceiver, &VideoReceiver::timeout, this, &VideoManager::_restartVideo);
     connect(_thermalVideoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
 
@@ -244,6 +247,23 @@ VideoManager::stopRecording()
     _videoReceiver->stopRecording();
 }
 
+void
+VideoManager::grabImage(const QString& imageFile)
+{
+    if (qgcApp()->runningUnitTests()) {
+        return;
+    }
+
+    if (!_videoReceiver) {
+        return;
+    }
+
+    _imageFile = imageFile;
+
+    emit imageFileChanged();
+
+    _videoReceiver->takeScreenshot(_imageFile);
+}
 
 //-----------------------------------------------------------------------------
 double VideoManager::aspectRatio()
@@ -307,6 +327,13 @@ VideoManager::hasThermal()
         }
     }
     return false;
+}
+
+//-----------------------------------------------------------------------------
+QString
+VideoManager::imageFile()
+{
+    return _imageFile;
 }
 
 //-----------------------------------------------------------------------------
@@ -618,6 +645,12 @@ VideoManager::_recordingChanged()
     if (_videoReceiver && !_videoReceiver->recording()) {
         _subtitleWriter.stopCapturingTelemetry();
     }
+}
+
+//----------------------------------------------------------------------------------------
+void
+VideoManager::_screenshotComplete()
+{
 }
 
 //----------------------------------------------------------------------------------------
