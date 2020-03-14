@@ -24,22 +24,38 @@
 #include <QWaitCondition>
 #include <QMutex>
 #include <QQueue>
+#include <QQuickItem>
 
-#if defined(QGC_GST_STREAMING)
 #include <gst/gst.h>
-typedef GstElement VideoSink;
-#else
-typedef void VideoSink;
-#endif
 
 Q_DECLARE_LOGGING_CATEGORY(VideoReceiverLog)
+
+class VideoSink : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit VideoSink(QQuickItem* widget);
+    VideoSink(const VideoSink& rhs);
+
+    ~VideoSink(void);
+
+    VideoSink& operator=(const VideoSink& rhs);
+
+    void* opaque(void) {
+        return _opaque;
+    }
+
+protected:
+    void* _opaque;
+};
 
 class VideoReceiver : public QThread
 {
     Q_OBJECT
 
 public:
-    explicit VideoReceiver(QObject* parent = nullptr);
+    explicit VideoReceiver(void);
     ~VideoReceiver(void);
 
     typedef enum {
@@ -84,13 +100,12 @@ signals:
 public slots:
     virtual void start(const QString& uri, unsigned timeout);
     virtual void stop(void);
-    virtual void startDecoding(VideoSink* videoSink);
+    virtual void startDecoding(void* opaque);
     virtual void stopDecoding(void);
     virtual void startRecording(const QString& videoFile, FILE_FORMAT format);
     virtual void stopRecording(void);
     virtual void takeScreenshot(const QString& imageFile);
 
-#if defined(QGC_GST_STREAMING)
 protected slots:
     virtual void _watchdog(void);
     virtual void _handleEOS(void);
@@ -163,13 +178,14 @@ private:
     QQueue<Task>        _taskQueue;
     bool                _shutdown;
 
-    static const char*  _kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN];
-#else
-private:
-#endif
-
     std::atomic<bool>   _streaming;
     std::atomic<bool>   _decoding;
     std::atomic<bool>   _recording;
     std::atomic<quint32>_videoSize;
+
+    static const char*  _kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN];
 };
+
+GstElement* createVideoSink(gpointer widget);
+
+void initializeVideoReceiver(int argc, char* argv[], int debuglevel);

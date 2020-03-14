@@ -23,6 +23,49 @@
 
 QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 
+VideoSink::VideoSink(QQuickItem* widget)
+    : QObject(nullptr)
+{
+    _opaque = createVideoSink(static_cast<gpointer>(widget));
+}
+
+VideoSink::VideoSink(const VideoSink& rhs)
+{
+    _opaque = rhs._opaque;
+
+    if (_opaque != nullptr) {
+        gst_object_ref(GST_ELEMENT(_opaque));
+    }
+}
+
+VideoSink& VideoSink::operator=(const VideoSink& rhs)
+{
+    if (_opaque != nullptr) {
+        gst_object_unref(GST_ELEMENT(_opaque));
+    }
+
+    _opaque = rhs._opaque;
+
+    if (_opaque != nullptr) {
+        gst_object_ref(GST_ELEMENT(_opaque));
+    }
+
+    return *this;
+}
+
+VideoSink::~VideoSink(void)
+{
+    GstElement* sink = GST_ELEMENT(_opaque);
+
+    if (sink != nullptr) {
+        gst_object_unref(sink);
+        sink = nullptr;
+    }
+
+    _opaque = nullptr;
+}
+
+
 //-----------------------------------------------------------------------------
 // Our pipeline look like this:
 //
@@ -33,9 +76,8 @@ QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 //              +-->queue-->_recorderValve[-->_fileSink]
 //
 
-VideoReceiver::VideoReceiver(QObject* parent)
-    : QThread(parent)
-#if defined(QGC_GST_STREAMING)
+VideoReceiver::VideoReceiver(void)
+    : QThread(nullptr)
     , _removingDecoder(false)
     , _removingRecorder(false)
     , _source(nullptr)
@@ -52,33 +94,27 @@ VideoReceiver::VideoReceiver(QObject* parent)
     , _videoSinkProbeId(0)
     , _udpReconnect_us(5000000)
     , _shutdown(false)
-#endif
     , _streaming(false)
     , _decoding(false)
     , _recording(false)
 {
-#if defined(QGC_GST_STREAMING)
     QThread::start();
     connect(&_watchdogTimer, &QTimer::timeout, this, &VideoReceiver::_watchdog);
     _watchdogTimer.start(1000);
-#endif
 }
 
 VideoReceiver::~VideoReceiver(void)
 {
-#if defined(QGC_GST_STREAMING)
     stop();
     _post([this](){
         _shutdown = true;
     });
     QThread::wait();
-#endif
 }
 
 void
 VideoReceiver::start(const QString& uri, unsigned timeout)
 {
-#if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this, uri, timeout]() {
             start(uri, timeout);
@@ -236,16 +272,11 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
         GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-started");
         qCDebug(VideoReceiverLog) << "Started";
     }
-#else
-    Q_UNUSED(uri);
-    Q_UNUSED(timeout);
-#endif
 }
 
 void
 VideoReceiver::stop(void)
 {
-#if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this]() {
             stop();
@@ -315,16 +346,16 @@ VideoReceiver::stop(void)
     }
 
     qCDebug(VideoReceiverLog) << "Stopped";
-#endif
 }
 
 void
-VideoReceiver::startDecoding(VideoSink* videoSink)
+VideoReceiver::startDecoding(void* opaque)
 {
-#if defined(QGC_GST_STREAMING)
+    GstElement* videoSink = GST_ELEMENT(opaque);
+
     if (!_isOurThread()) {
         gst_object_ref(videoSink);
-        _post([this, videoSink]() {
+        _post([this, videoSink]{
             startDecoding(videoSink);
             gst_object_unref(videoSink);
         });
@@ -376,15 +407,11 @@ VideoReceiver::startDecoding(VideoSink* videoSink)
     g_object_set(_decoderValve, "drop", FALSE, nullptr);
 
     qCDebug(VideoReceiverLog) << "Decoding started";
-#else
-    Q_UNUSED(videoSink)
-#endif
 }
 
 void
 VideoReceiver::stopDecoding(void)
 {
-#if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this]() {
             stopDecoding();
@@ -405,13 +432,11 @@ VideoReceiver::stopDecoding(void)
     _removingDecoder = true;
 
     _unlinkBranch(_decoderValve);
-#endif
 }
 
 void
 VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
 {
-#if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this, videoFile, format]() {
             startRecording(videoFile, format);
@@ -470,17 +495,12 @@ VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
     emit recordingChanged();
 
     qCDebug(VideoReceiverLog) << "Recording started";
-#else
-    Q_UNUSED(videoFile)
-    Q_UNUSED(format)
-#endif
 }
 
 //-----------------------------------------------------------------------------
 void
 VideoReceiver::stopRecording(void)
 {
-#if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this]() {
             stopRecording();
@@ -501,13 +521,11 @@ VideoReceiver::stopRecording(void)
     _removingRecorder = true;
 
     _unlinkBranch(_recorderValve);
-#endif
 }
 
 void
 VideoReceiver::takeScreenshot(const QString& imageFile)
 {
-#if defined(QGC_GST_STREAMING)
     if (!_isOurThread()) {
         _post([this, imageFile]() {
             takeScreenshot(imageFile);
@@ -517,12 +535,8 @@ VideoReceiver::takeScreenshot(const QString& imageFile)
 
     // FIXME: AV: record screenshot here
     emit screenshotComplete();
-#else
-    Q_UNUSED(imageFile);
-#endif
 }
 
-#if defined(QGC_GST_STREAMING)
 const char* VideoReceiver::_kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN] = {
     "matroskamux",
     "qtmux",
@@ -1528,4 +1542,3 @@ VideoReceiver::_keyframeWatch(GstPad* pad, GstPadProbeInfo* info, gpointer user_
 
     return GST_PAD_PROBE_REMOVE;
 }
-#endif

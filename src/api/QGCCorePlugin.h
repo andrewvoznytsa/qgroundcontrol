@@ -32,9 +32,11 @@ class Vehicle;
 class LinkInterface;
 class QmlObjectListModel;
 class VideoReceiver;
+class VideoSink;
 class PlanMasterController;
 class QGCCameraManager;
 class QGCCameraControl;
+class QQuickItem;
 
 class QGCCorePlugin : public QGCTool
 {
@@ -112,7 +114,9 @@ public:
     /// Allows the plugin to override the creation of VideoManager.
     virtual VideoManager* createVideoManager(QGCApplication* app, QGCToolbox* toolbox);
     /// Allows the plugin to override the creation of VideoReceiver.
-    virtual VideoReceiver* createVideoReceiver(QObject* parent);
+    virtual VideoReceiver* createVideoReceiver();
+    /// Allows the plugin to override the creation of VideoSink.
+    virtual VideoSink* createVideoSink(QQuickItem* widget);
 
     /// Allows the plugin to see all mavlink traffic to a vehicle
     /// @return true: Allow vehicle to continue processing, false: Vehicle should not process message

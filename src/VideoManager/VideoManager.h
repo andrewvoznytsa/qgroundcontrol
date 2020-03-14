@@ -18,7 +18,9 @@
 
 #include "QGCMAVLink.h"
 #include "QGCLoggingCategory.h"
+#if defined(QGC_GST_STREAMING)
 #include "VideoReceiver.h"
+#endif
 #include "QGCToolbox.h"
 #include "SubtitleWriter.h"
 
@@ -112,10 +114,7 @@ protected slots:
 
 protected:
     friend class FinishVideoInitialization;
-#if defined(QGC_GST_STREAMING)
-    static gboolean _videoSinkQuery (GstPad* pad, GstObject* parent, GstQuery* query);
-    GstElement*     _makeVideoSink  (gpointer widget);
-#endif
+
     void _initVideo                 ();
     void _updateSettings            ();
     void _setVideoUri               (const QString& uri);
@@ -135,8 +134,8 @@ protected:
     VideoReceiver*  _videoReceiver          = nullptr;
     VideoReceiver*  _thermalVideoReceiver   = nullptr;
 #if defined(QGC_GST_STREAMING)
-    GstElement*     _videoSink              = nullptr;
-    GstElement*     _thermalVideoSink       = nullptr;
+    VideoSink*      _videoSink              = nullptr;
+    VideoSink*      _thermalVideoSink       = nullptr;
 #endif
     VideoSettings*  _videoSettings          = nullptr;
     QString         _videoUri;
