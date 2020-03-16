@@ -186,6 +186,6 @@ private:
     static const char*  _kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN];
 };
 
-GstElement* createVideoSink(gpointer widget);
+void* createVideoSink(void* widget);
 
 void initializeVideoReceiver(int argc, char* argv[], int debuglevel);

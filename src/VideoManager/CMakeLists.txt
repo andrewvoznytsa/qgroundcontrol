@@ -14,8 +14,6 @@ add_library(VideoManager
 )
 
 target_link_libraries(VideoManager
-    PRIVATE
-        gst_plugins_good
     PUBLIC
         qgc
         Qt5::Multimedia

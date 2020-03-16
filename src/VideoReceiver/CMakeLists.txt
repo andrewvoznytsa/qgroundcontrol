@@ -1,9 +1,3 @@
-set(EXTRA_LIBRARIES)
-
-if (GST_FOUND)
-    set(EXTRA_LIBRARIES ${GST_LIBRARIES})
-endif()
-
 add_library(VideoReceiver
     gstqgc.c
     gstqgcvideosinkbin.c
@@ -14,10 +8,11 @@ add_library(VideoReceiver
 
 target_link_libraries(VideoReceiver
     PUBLIC
-        qgc
         Qt5::Multimedia
         Qt5::OpenGL
-        ${EXTRA_LIBRARIES}
+        Qt5::Quick
+        qmlglsink
+        ${GST_LIBRARIES}
 )
 
 target_include_directories(VideoReceiver INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

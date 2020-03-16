@@ -14,7 +14,6 @@
  *   @author Gus Grubba <gus@auterion.com>
  */
 
-#include <QtQml>
 #include <QDebug>
 
 #include "VideoReceiver.h"
@@ -195,7 +194,7 @@ void initializeVideoReceiver(int argc, char* argv[], int debuglevel)
     GST_PLUGIN_STATIC_REGISTER(qgc);
 }
 
-GstElement* createVideoSink(gpointer widget)
+void* createVideoSink(void* widget)
 {
     GstElement* sink;
 

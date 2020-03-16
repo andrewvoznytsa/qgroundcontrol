@@ -102,8 +102,6 @@ if (GST_FOUND)
         -DQGC_GST_TAISYNC_ENABLED
         -DQGC_GST_MICROHARD_ENABLED
     )
-
-    include(qmlglsink.cmake)
 endif()
 
 add_definitions(
