@@ -19,7 +19,6 @@
 #include <QObject>
 #include <QSize>
 #include <QTimer>
-#include <QTcpSocket>
 #include <QThread>
 #include <QWaitCondition>
 #include <QMutex>
@@ -35,7 +34,8 @@ class VideoSink : public QObject
     Q_OBJECT
 
 public:
-    explicit VideoSink(QQuickItem* widget);
+    VideoSink(void* opaque);
+    VideoSink(QObject* parent, void* opaque);
     VideoSink(const VideoSink& rhs);
 
     ~VideoSink(void);
@@ -50,12 +50,63 @@ protected:
     void* _opaque;
 };
 
-class VideoReceiver : public QThread
+class Worker : public QThread
 {
     Q_OBJECT
 
 public:
-    explicit VideoReceiver(void);
+    bool needDispatch() {
+        return QThread::currentThread() != this;
+    }
+
+    void dispatch(std::function<void()> t) {
+        QMutexLocker lock(&_taskQueueSync);
+        _taskQueue.enqueue(t);
+        _taskQueueUpdate.wakeOne();
+    }
+
+    void shutdown() {
+        if (needDispatch()) {
+            dispatch([this](){
+                _shutdown = true;
+            });
+            QThread::wait();
+        } else {
+            QThread::terminate();
+        }
+    }
+
+protected:
+    void run() {
+        while(!_shutdown) {
+            _taskQueueSync.lock();
+
+            while (_taskQueue.isEmpty()) {
+                _taskQueueUpdate.wait(&_taskQueueSync);
+            }
+
+            Task t = _taskQueue.dequeue();
+
+            _taskQueueSync.unlock();
+
+            t();
+        }
+    }
+
+private:
+    typedef std::function<void()> Task;
+    QWaitCondition      _taskQueueUpdate;
+    QMutex              _taskQueueSync;
+    QQueue<Task>        _taskQueue;
+    bool                _shutdown = false;
+};
+
+class VideoReceiver : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit VideoReceiver(QObject* parent = nullptr);
     ~VideoReceiver(void);
 
     typedef enum {
@@ -100,7 +151,7 @@ signals:
 public slots:
     virtual void start(const QString& uri, unsigned timeout);
     virtual void stop(void);
-    virtual void startDecoding(void* opaque);
+    virtual void startDecoding(VideoSink* sink);
     virtual void stopDecoding(void);
     virtual void startRecording(const QString& videoFile, FILE_FORMAT format);
     virtual void stopRecording(void);
@@ -130,11 +181,6 @@ protected:
     virtual void _unlinkBranch(GstElement* from);
     virtual void _shutdownDecodingBranch (void);
     virtual void _shutdownRecordingBranch(void);
-
-    typedef std::function<void(void)> Task;
-    bool _isOurThread(void);
-    void _post(Task t);
-    void run(void);
 
 private:
     static gboolean _onBusMessage(GstBus* bus, GstMessage* message, gpointer user_data);
@@ -173,11 +219,10 @@ private:
 
     unsigned            _timeout;
 
-    QWaitCondition      _taskQueueUpdate;
-    QMutex              _taskQueueSync;
-    QQueue<Task>        _taskQueue;
-    bool                _shutdown;
+    Worker              _apiHandler;
+    Worker              _notificationHandler;
 
+    bool                _endOfStream;
     std::atomic<bool>   _streaming;
     std::atomic<bool>   _decoding;
     std::atomic<bool>   _recording;

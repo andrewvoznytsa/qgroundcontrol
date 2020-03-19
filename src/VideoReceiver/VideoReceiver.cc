@@ -23,16 +23,22 @@
 
 QGC_LOGGING_CATEGORY(VideoReceiverLog, "VideoReceiverLog")
 
-VideoSink::VideoSink(QQuickItem* widget)
+VideoSink::VideoSink(void* opaque)
     : QObject(nullptr)
+    , _opaque(opaque)
 {
-    _opaque = createVideoSink(static_cast<gpointer>(widget));
+}
+
+VideoSink::VideoSink(QObject* parent, void* opaque)
+    : QObject(parent)
+    , _opaque(opaque)
+{
 }
 
 VideoSink::VideoSink(const VideoSink& rhs)
+    : QObject(rhs.parent())
+    , _opaque(rhs._opaque)
 {
-    _opaque = rhs._opaque;
-
     if (_opaque != nullptr) {
         gst_object_ref(GST_ELEMENT(_opaque));
     }
@@ -76,8 +82,8 @@ VideoSink::~VideoSink(void)
 //              +-->queue-->_recorderValve[-->_fileSink]
 //
 
-VideoReceiver::VideoReceiver(void)
-    : QThread(nullptr)
+VideoReceiver::VideoReceiver(QObject* parent)
+    : QObject(parent)
     , _removingDecoder(false)
     , _removingRecorder(false)
     , _source(nullptr)
@@ -93,12 +99,13 @@ VideoReceiver::VideoReceiver(void)
     , _resetVideoSink(true)
     , _videoSinkProbeId(0)
     , _udpReconnect_us(5000000)
-    , _shutdown(false)
+    , _endOfStream(false)
     , _streaming(false)
     , _decoding(false)
     , _recording(false)
 {
-    QThread::start();
+    _apiHandler.start();
+    _notificationHandler.start();
     connect(&_watchdogTimer, &QTimer::timeout, this, &VideoReceiver::_watchdog);
     _watchdogTimer.start(1000);
 }
@@ -106,17 +113,15 @@ VideoReceiver::VideoReceiver(void)
 VideoReceiver::~VideoReceiver(void)
 {
     stop();
-    _post([this](){
-        _shutdown = true;
-    });
-    QThread::wait();
+    _notificationHandler.shutdown();
+    _apiHandler.shutdown();
 }
 
 void
 VideoReceiver::start(const QString& uri, unsigned timeout)
 {
-    if (!_isOurThread()) {
-        _post([this, uri, timeout]() {
+    if (_apiHandler.needDispatch()) {
+        _apiHandler.dispatch([this, uri, timeout]() {
             start(uri, timeout);
         });
         return;
@@ -133,6 +138,8 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
     }
 
     qCDebug(VideoReceiverLog) << "Starting";
+
+    _endOfStream = false;
 
     _timeout = timeout;
 
@@ -277,8 +284,8 @@ VideoReceiver::start(const QString& uri, unsigned timeout)
 void
 VideoReceiver::stop(void)
 {
-    if (!_isOurThread()) {
-        _post([this]() {
+    if (_apiHandler.needDispatch()) {
+        _apiHandler.dispatch([this]() {
             stop();
         });
         return;
@@ -340,8 +347,10 @@ VideoReceiver::stop(void)
 
         if (_streaming) {
             _streaming = false;
-            emit streamingChanged();
             qCDebug(VideoReceiverLog) << "Streaming stopped";
+            _notificationHandler.dispatch([this](){
+                emit streamingChanged();
+            });
         }
     }
 
@@ -349,15 +358,17 @@ VideoReceiver::stop(void)
 }
 
 void
-VideoReceiver::startDecoding(void* opaque)
+VideoReceiver::startDecoding(VideoSink* sink)
 {
-    GstElement* videoSink = GST_ELEMENT(opaque);
+    if (sink == nullptr) {
+        qCCritical(VideoReceiverLog) << "VideoSink is NULL";
+        return;
+    }
 
-    if (!_isOurThread()) {
-        gst_object_ref(videoSink);
-        _post([this, videoSink]{
-            startDecoding(videoSink);
-            gst_object_unref(videoSink);
+    if (_apiHandler.needDispatch()) {
+        VideoSink _sink = *sink;
+        _apiHandler.dispatch([this, _sink]() mutable {
+            startDecoding(&_sink);
         });
         return;
     }
@@ -370,6 +381,8 @@ VideoReceiver::startDecoding(void* opaque)
             _videoSink = nullptr;
         }
     }
+
+    GstElement* videoSink = GST_ELEMENT(sink->opaque());
 
     if(_videoSink != nullptr || _decoding) {
         qCDebug(VideoReceiverLog) << "Already decoding!";
@@ -412,8 +425,8 @@ VideoReceiver::startDecoding(void* opaque)
 void
 VideoReceiver::stopDecoding(void)
 {
-    if (!_isOurThread()) {
-        _post([this]() {
+    if (_apiHandler.needDispatch()) {
+        _apiHandler.dispatch([this]() {
             stopDecoding();
         });
         return;
@@ -437,8 +450,8 @@ VideoReceiver::stopDecoding(void)
 void
 VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
 {
-    if (!_isOurThread()) {
-        _post([this, videoFile, format]() {
+    if (_apiHandler.needDispatch()) {
+        _apiHandler.dispatch([this, videoFile, format]() {
             startRecording(videoFile, format);
         });
         return;
@@ -446,8 +459,12 @@ VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
 
     qCDebug(VideoReceiverLog) << "Starting recording";
 
-    // exit immediately if we are already recording
-    if (_pipeline == nullptr || _recording) {
+    if (_pipeline == nullptr) {
+        qCDebug(VideoReceiverLog) << "Streaming is not active!";
+        return;
+    }
+
+    if (_recording) {
         qCDebug(VideoReceiverLog) << "Already recording!";
         return;
     }
@@ -491,18 +508,18 @@ VideoReceiver::startRecording(const QString& videoFile, FILE_FORMAT format)
     g_object_set(_recorderValve, "drop", FALSE, nullptr);
 
     _recording = true;
-
-    emit recordingChanged();
-
     qCDebug(VideoReceiverLog) << "Recording started";
+    _notificationHandler.dispatch([this](){
+        emit recordingChanged();
+    });
 }
 
 //-----------------------------------------------------------------------------
 void
 VideoReceiver::stopRecording(void)
 {
-    if (!_isOurThread()) {
-        _post([this]() {
+    if (_apiHandler.needDispatch()) {
+        _apiHandler.dispatch([this]() {
             stopRecording();
         });
         return;
@@ -526,15 +543,17 @@ VideoReceiver::stopRecording(void)
 void
 VideoReceiver::takeScreenshot(const QString& imageFile)
 {
-    if (!_isOurThread()) {
-        _post([this, imageFile]() {
+    if (_apiHandler.needDispatch()) {
+        _apiHandler.dispatch([this, imageFile]() {
             takeScreenshot(imageFile);
         });
         return;
     }
 
     // FIXME: AV: record screenshot here
-    emit screenshotComplete();
+    _notificationHandler.dispatch([this](){
+        emit screenshotComplete();
+    });
 }
 
 const char* VideoReceiver::_kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN] = {
@@ -546,7 +565,7 @@ const char* VideoReceiver::_kFileMux[FILE_FORMAT_MAX - FILE_FORMAT_MIN] = {
 void
 VideoReceiver::_watchdog(void)
 {
-    _post([this](){
+    _apiHandler.dispatch([this](){
         if(_pipeline == nullptr) {
             return;
         }
@@ -558,7 +577,10 @@ VideoReceiver::_watchdog(void)
         }
 
         if (now - _lastSourceFrameTime > _timeout) {
-            emit timeout();
+            qCDebug(VideoReceiverLog) << "Stream timeout, no frames for " << now - _lastSourceFrameTime;
+            _notificationHandler.dispatch([this](){
+                emit timeout();
+            });
         }
 
         if (_decoding && !_removingDecoder) {
@@ -567,7 +589,10 @@ VideoReceiver::_watchdog(void)
             }
 
             if (now - _lastVideoFrameTime > _timeout * 2) {
-                emit timeout();
+                qCDebug(VideoReceiverLog) << "Video decoder timeout, no frames for " << now - _lastVideoFrameTime;
+                _notificationHandler.dispatch([this](){
+                    emit timeout();
+                });
             }
         }
     });
@@ -581,17 +606,17 @@ VideoReceiver::_handleEOS(void)
         return;
     }
 
-    if (!_streaming) {
+    if (_endOfStream) {
         stop();
     } else {
         if(_decoding && _removingDecoder) {
             _shutdownDecodingBranch();
         } else if(_recording && _removingRecorder) {
             _shutdownRecordingBranch();
-        } else {
+        } /*else {
             qCWarning(VideoReceiverLog) << "Unexpected EOS!";
             stop();
-        }
+        }*/
     }
 }
 
@@ -758,6 +783,8 @@ VideoReceiver::_makeSource(const QString& uri)
 GstElement*
 VideoReceiver::_makeDecoder(GstCaps* caps, GstElement* videoSink)
 {
+    Q_UNUSED(caps);
+
     GstElement* decoder = nullptr;
 
     do {
@@ -871,7 +898,9 @@ VideoReceiver::_onNewSourcePad(GstPad* pad)
     if (!_streaming) {
         _streaming = true;
         qCDebug(VideoReceiverLog) << "Streaming started";
-        emit streamingChanged();
+        _notificationHandler.dispatch([this](){
+            emit streamingChanged();
+        });
     }
 
     gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, _eosProbe, this, nullptr);
@@ -995,7 +1024,10 @@ VideoReceiver::_addVideoSink(GstPad* pad)
     }
 
     _decoding = true;
-    emit decodingChanged();
+    qCDebug(VideoReceiverLog) << "Decoding started";
+    _notificationHandler.dispatch([this](){
+        emit decodingChanged();
+    });
 
     return true;
 }
@@ -1015,9 +1047,7 @@ VideoReceiver::_noteVideoSinkFrame(void)
 void
 VideoReceiver::_noteEndOfStream(void)
 {
-    if (_streaming) {
-        _streaming = false;
-    }
+    _endOfStream = true;
 }
 
 // -Unlink the branch from the src pad
@@ -1111,8 +1141,10 @@ VideoReceiver::_shutdownDecodingBranch(void)
 
     if (_decoding) {
         _decoding = false;
-        emit decodingChanged();
         qCDebug(VideoReceiverLog) << "Decoding stopped";
+        _notificationHandler.dispatch([this](){
+            emit decodingChanged();
+        });
     }
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-decoding-stopped");
@@ -1130,43 +1162,13 @@ VideoReceiver::_shutdownRecordingBranch(void)
 
     if (_recording) {
         _recording = false;
-        emit recordingChanged();
         qCDebug(VideoReceiverLog) << "Recording stopped";
+        _notificationHandler.dispatch([this](){
+            emit recordingChanged();
+        });
     }
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline-recording-stopped");
-}
-
-bool
-VideoReceiver::_isOurThread(void)
-{
-    return QThread::currentThread() == (QThread*)this;
-}
-
-void
-VideoReceiver::_post(Task t)
-{
-    QMutexLocker lock(&_taskQueueSync);
-    _taskQueue.enqueue(t);
-    _taskQueueUpdate.wakeOne();
-}
-
-void
-VideoReceiver::run(void)
-{
-    while(!_shutdown) {
-        _taskQueueSync.lock();
-
-        while (_taskQueue.isEmpty()) {
-            _taskQueueUpdate.wait(&_taskQueueSync);
-        }
-
-        Task t = _taskQueue.dequeue();
-
-        _taskQueueSync.unlock();
-
-        t();
-    }
 }
 
 gboolean
@@ -1195,13 +1197,13 @@ VideoReceiver::_onBusMessage(GstBus* bus, GstMessage* msg, gpointer data)
                 error = nullptr;
             }
 
-            pThis->_post([pThis](){
+            pThis->_apiHandler.dispatch([pThis](){
                 pThis->stop();
             });
         } while(0);
         break;
     case GST_MESSAGE_EOS:
-        pThis->_post([pThis](){
+        pThis->_apiHandler.dispatch([pThis](){
             pThis->_handleEOS();
         });
         break;
@@ -1222,7 +1224,7 @@ VideoReceiver::_onBusMessage(GstBus* bus, GstMessage* msg, gpointer data)
             }
 
             if (GST_MESSAGE_TYPE(forward_msg) == GST_MESSAGE_EOS) {
-                pThis->_post([pThis](){
+                pThis->_apiHandler.dispatch([pThis](){
                     pThis->_handleEOS();
                 });
             }
@@ -1255,6 +1257,8 @@ VideoReceiver::_onNewPad(GstElement* element, GstPad* pad, gpointer data)
 void
 VideoReceiver::_wrapWithGhostPad(GstElement* element, GstPad* pad, gpointer data)
 {
+    Q_UNUSED(data)
+
     gchar* name;
 
     if ((name = gst_pad_get_name(pad)) == nullptr) {
@@ -1350,6 +1354,8 @@ VideoReceiver::_linkPadWithOptionalBuffer(GstElement* element, GstPad* pad, gpoi
 gboolean
 VideoReceiver::_padProbe(GstElement* element, GstPad* pad, gpointer user_data)
 {
+    Q_UNUSED(element)
+
     int* probeRes = (int*)user_data;
 
     *probeRes |= 1;
@@ -1378,6 +1384,10 @@ VideoReceiver::_padProbe(GstElement* element, GstPad* pad, gpointer user_data)
 gboolean
 VideoReceiver::_autoplugQueryCaps(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data)
 {
+    Q_UNUSED(bin)
+    Q_UNUSED(pad)
+    Q_UNUSED(element)
+
     GstElement* glupload = (GstElement* )data;
 
     GstPad* sinkpad;
@@ -1409,6 +1419,10 @@ VideoReceiver::_autoplugQueryCaps(GstElement* bin, GstPad* pad, GstElement* elem
 gboolean
 VideoReceiver::_autoplugQueryContext(GstElement* bin, GstPad* pad, GstElement* element, GstQuery* query, gpointer data)
 {
+    Q_UNUSED(bin)
+    Q_UNUSED(pad)
+    Q_UNUSED(element)
+
     GstElement* glsink = (GstElement* )data;
 
     GstPad* sinkpad;
@@ -1449,7 +1463,7 @@ VideoReceiver::_autoplugQuery(GstElement* bin, GstPad* pad, GstElement* element,
 GstPadProbeReturn
 VideoReceiver::_teeProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
-    Q_UNUSED(pad);
+    Q_UNUSED(pad)
     Q_UNUSED(info)
 
     if(user_data != nullptr) {
@@ -1463,6 +1477,9 @@ VideoReceiver::_teeProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 GstPadProbeReturn
 VideoReceiver::_videoSinkProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
+    Q_UNUSED(pad)
+    Q_UNUSED(info)
+
     if(user_data != nullptr) {
         VideoReceiver* pThis = static_cast<VideoReceiver*>(user_data);
 

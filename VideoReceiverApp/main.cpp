@@ -111,74 +111,126 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved)
 
 #include <VideoReceiver.h>
 
-class StartDecoding : public QRunnable
+QGC_LOGGING_CATEGORY(AppLog, "VideoReceiverApp")
+
+class VideoReceiverApp : public QRunnable
 {
 public:
-    StartDecoding(VideoReceiver* receiver, QQuickItem* widget)
-        : _receiver(receiver)
-        , _widget(widget)
+    VideoReceiverApp(QCoreApplication& app, bool qmlAllowed)
+        : _app(app)
+        , _qmlAllowed(qmlAllowed)
     {}
 
     void run();
 
+    int exec();
+
+    void startStreaming();
+    void startDecoding();
+    void startRecording();
+
+protected:
+    void _dispatch(std::function<void()> code);
+
 private:
-    VideoReceiver* _receiver;
-    QQuickItem* _widget;
+    QCoreApplication& _app;
+    bool _qmlAllowed;
+    VideoReceiver* _receiver = nullptr;
+    QQuickWindow* _window = nullptr;
+    QQuickItem* _widget = nullptr;
+    VideoSink* _videoSink = nullptr;
+    QString _url;
+    unsigned _timeout = 5;
+    unsigned _connect = 1;
+    bool _decode = true;
+    unsigned _stopDecodingAfter = 0;
+    bool _record = false;
+    QString _videoFile;
+    unsigned int _fileFormat = VideoReceiver::FILE_FORMAT_MIN;
+    unsigned _stopRecordingAfter = 15;
+    bool _useFakeSink = false;
 };
 
 void
-StartDecoding::run()
+VideoReceiverApp::run()
 {
-    _receiver->startDecoding(createVideoSink(_widget));
+    void* opaque;
+
+    if((opaque = createVideoSink(static_cast<gpointer>(_widget))) == nullptr) {
+        qCDebug(AppLog) << "createVideoSink failed";
+        return;
+    }
+
+    _videoSink = new VideoSink(opaque);
+
+    _receiver->startDecoding(_videoSink);
 }
 
-int main(int argc, char *argv[])
+int
+VideoReceiverApp::exec()
 {
-    QGuiApplication app(argc, argv);
-
     QCommandLineParser parser;
 
     parser.addHelpOption();
 
     parser.addPositionalArgument("url",
-        QGuiApplication::translate("main", "Source URL."));
+        QCoreApplication::translate("main", "Source URL."));
 
     QCommandLineOption timeoutOption(QStringList() << "t" << "timeout",
-        QGuiApplication::translate("main", "Source timeout."),
-        QGuiApplication::translate("main", "seconds"));
+        QCoreApplication::translate("main", "Source timeout."),
+        QCoreApplication::translate("main", "seconds"));
 
     parser.addOption(timeoutOption);
 
-    QCommandLineOption noDecodeOption(QStringList() << "n" << "no-decode",
-        QGuiApplication::translate("main", "Don't decode and render video."));
+    QCommandLineOption connectOption(QStringList() << "c" << "connect",
+        QCoreApplication::translate("main", "Number of connection attempts."),
+        QCoreApplication::translate("main", "attempts"));
+
+    parser.addOption(connectOption);
+
+    QCommandLineOption decodeOption(QStringList() << "d" << "decode",
+        QCoreApplication::translate("main", "Decode and render video."));
+
+    parser.addOption(decodeOption);
+
+    QCommandLineOption noDecodeOption("no-decode",
+        QCoreApplication::translate("main", "Don't decode and render video."));
 
     parser.addOption(noDecodeOption);
 
     QCommandLineOption stopDecodingOption("stop-decoding",
-        QGuiApplication::translate("main", "Stop decoding after time."),
-        QGuiApplication::translate("main", "seconds"));
+        QCoreApplication::translate("main", "Stop decoding after time."),
+        QCoreApplication::translate("main", "seconds"));
 
     parser.addOption(stopDecodingOption);
 
     QCommandLineOption recordOption(QStringList() << "r" << "record",
-        QGuiApplication::translate("main", "Record video."),
+        QCoreApplication::translate("main", "Record video."),
         QGuiApplication::translate("main", "file"));
 
     parser.addOption(recordOption);
 
     QCommandLineOption formatOption(QStringList() << "f" << "format",
-        QGuiApplication::translate("main", "File format."),
-        QGuiApplication::translate("main", "format"));
+        QCoreApplication::translate("main", "File format."),
+        QCoreApplication::translate("main", "format"));
 
     parser.addOption(formatOption);
 
     QCommandLineOption stopRecordingOption("stop-recording",
-        QGuiApplication::translate("main", "Stop recording after time."),
-        QGuiApplication::translate("main", "seconds"));
+        QCoreApplication::translate("main", "Stop recording after time."),
+        QCoreApplication::translate("main", "seconds"));
 
     parser.addOption(stopRecordingOption);
 
-    parser.process(app);
+    QCommandLineOption videoSinkOption("video-sink",
+        QCoreApplication::translate("main", "Use video sink: 0 - autovideosink, 1 - fakesink"),
+        QCoreApplication::translate("main", "sink"));
+
+    if (!_qmlAllowed) {
+        parser.addOption(videoSinkOption);
+    }
+
+    parser.process(_app);
 
     const QStringList args = parser.positionalArguments();
 
@@ -186,75 +238,244 @@ int main(int argc, char *argv[])
         parser.showHelp(0);
     }
 
-    QString url = args.at(0);
-    unsigned timeout = 5;
-    bool decode = true;
-    unsigned stopDecodingAfter = 0;
-    bool record = false;
-    QString videoFile;
-    unsigned int fileFormat = VideoReceiver::FILE_FORMAT_MIN;
-    unsigned stopRecordingAfter = 15;
+    _url = args.at(0);
 
     if (parser.isSet(timeoutOption)) {
-        timeout = parser.value(timeoutOption).toUInt();
+        _timeout = parser.value(timeoutOption).toUInt();
+    }
+
+    if (parser.isSet(connectOption)) {
+        _connect = parser.value(connectOption).toUInt();
+    }
+
+    if (parser.isSet(decodeOption) && parser.isSet(noDecodeOption)) {
+        parser.showHelp(0);
+    }
+
+    if (parser.isSet(decodeOption)) {
+        _decode = true;
     }
 
     if (parser.isSet(noDecodeOption)) {
-        decode = false;
+        _decode = false;
     }
 
-    if (decode && parser.isSet(stopDecodingOption)) {
-        stopDecodingAfter = parser.value(stopDecodingOption).toUInt();
+    if (_decode && parser.isSet(stopDecodingOption)) {
+        _stopDecodingAfter = parser.value(stopDecodingOption).toUInt();
     }
 
     if (parser.isSet(recordOption)) {
-        record = true;
-        videoFile = parser.value(recordOption);
+        _record = true;
+        _videoFile = parser.value(recordOption);
     }
 
     if (parser.isSet(formatOption)) {
-        fileFormat += parser.value(formatOption).toUInt();
+        _fileFormat += parser.value(formatOption).toUInt();
     }
 
-    if (record && parser.isSet(stopRecordingOption)) {
-        stopRecordingAfter = parser.value(stopRecordingOption).toUInt();
+    if (_record && parser.isSet(stopRecordingOption)) {
+        _stopRecordingAfter = parser.value(stopRecordingOption).toUInt();
+    }
+
+    if (parser.isSet(videoSinkOption)) {
+        _useFakeSink = parser.value(stopRecordingOption).toUInt() > 0;
+    }
+
+    _receiver = new VideoReceiver();
+
+    QQmlApplicationEngine engine;
+
+    if (_decode && _qmlAllowed) {
+        engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
+
+        _window = static_cast<QQuickWindow*>(engine.rootObjects().first());
+        Q_ASSERT(_window != nullptr);
+
+        _widget = _window->findChild<QQuickItem*>("videoItem");
+        Q_ASSERT(_widget != nullptr);
+    }
+
+    startStreaming();
+
+    QObject::connect(_receiver, &VideoReceiver::timeout, [this](){
+        qCDebug(AppLog) << "Streaming timeout";
+
+        _dispatch([this](){
+            if (_receiver->streaming()) {
+                _receiver->stop();
+            } else {
+                if (--_connect > 0) {
+                    qCDebug(AppLog) << "Restarting streaming";
+                    _dispatch([this](){
+                        startStreaming();
+                    });
+                } else {
+                    qCDebug(AppLog) << "Closing...";
+                    delete _receiver;
+                    _app.exit();
+                }
+            }
+        });
+     });
+
+    QObject::connect(_receiver, &VideoReceiver::streamingChanged, [this](){
+        if (_receiver->streaming()) {
+            qCDebug(AppLog) << "Streaming started";
+        } else {
+            qCDebug(AppLog) << "Streaming stopped";
+            _dispatch([this](){
+                if (--_connect > 0) {
+                    qCDebug(AppLog) << "Restarting streaming";
+                    startStreaming();
+                } else {
+                    qCDebug(AppLog) << "Closing...";
+                    delete _receiver;
+                    _app.exit();
+                }
+            });
+        }
+     });
+
+    QObject::connect(_receiver, &VideoReceiver::decodingChanged, [this](){
+        if (_receiver->decoding()) {
+            qCDebug(AppLog) << "Decoding started";
+        } else {
+            qCDebug(AppLog) << "Decoding stopped";
+            if (_receiver->streaming()) {
+                if (!_receiver->recording()) {
+                    _dispatch([this](){
+                        _receiver->stop();
+                    });
+                }
+            }
+        }
+     });
+
+    QObject::connect(_receiver, &VideoReceiver::recordingChanged, [this](){
+        if (_receiver->recording()) {
+            qCDebug(AppLog) << "Recording started";
+        } else {
+            qCDebug(AppLog) << "Recording stopped";
+            if (_receiver->streaming()) {
+                if (!_receiver->decoding()) {
+                    _dispatch([this](){
+                        _receiver->stop();
+                    });
+                }
+            }
+        }
+     });
+
+    return _app.exec();
+}
+
+void
+VideoReceiverApp::startStreaming()
+{
+    _receiver->start(_url, _timeout);
+
+    if (_decode) {
+        startDecoding();
+    }
+
+    if (_record) {
+        startRecording();
+    }
+}
+
+void
+VideoReceiverApp::startDecoding()
+{
+    if (_qmlAllowed) {
+        _window->scheduleRenderJob(this, QQuickWindow::BeforeSynchronizingStage);
+    } else {
+        if (_videoSink == nullptr) {
+            void* opaque;
+
+            if ((opaque = gst_element_factory_make(_useFakeSink ? "fakesink" : "autovideosink", nullptr)) == nullptr) {
+                qCDebug(AppLog) << "Failed to create video sink";
+                return;
+            }
+
+            _videoSink = new VideoSink(opaque);
+        }
+
+        _receiver->startDecoding(_videoSink);
+    }
+
+    if (_stopDecodingAfter > 0) {
+        unsigned connect = _connect;
+        QTimer::singleShot(_stopDecodingAfter * 1000, Qt::PreciseTimer, [this, connect](){
+            if (connect != _connect) {
+                return;
+            }
+            _receiver->stopDecoding();
+        });
+    }
+}
+
+void
+VideoReceiverApp::startRecording()
+{
+    _receiver->startRecording(_videoFile, static_cast<VideoReceiver::FILE_FORMAT>(_fileFormat));
+
+    if (_stopRecordingAfter > 0) {
+        unsigned connect = _connect;
+        QTimer::singleShot(_stopRecordingAfter * 1000, [this, connect](){
+            if (connect != _connect) {
+                return;
+            }
+            _receiver->stopRecording();
+        });
+    }
+}
+
+void
+VideoReceiverApp::_dispatch(std::function<void()> code)
+{
+    QTimer* timer = new QTimer();
+    timer->moveToThread(qApp->thread());
+    timer->setSingleShot(true);
+    QObject::connect(timer, &QTimer::timeout, [=](){
+        code();
+        timer->deleteLater();
+    });
+    QMetaObject::invokeMethod(timer, "start", Qt::QueuedConnection, Q_ARG(int, 0));
+}
+
+
+static bool isQtApp(const char* app)
+{
+    const char* s;
+
+#if defined(Q_OS_WIN)
+    if ((s = strrchr(app, '\\')) != nullptr) {
+#else
+    if ((s = strrchr(app, '/')) != nullptr) {
+#endif
+        s += 1;
+    } else {
+        s = app;
+    }
+
+    return s[0] == 'Q' || s[0] == 'q';
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 1) {
+        return 0;
     }
 
     initializeVideoReceiver(argc, argv, 3);
 
-    VideoReceiver* receiver = new VideoReceiver();
-
-    receiver->start(url, timeout);
-
-    QQmlApplicationEngine engine;
-
-    engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
-
-    QQuickWindow* rootObject = static_cast<QQuickWindow*>(engine.rootObjects().first());
-    Q_ASSERT(rootObject != nullptr);
-
-    QQuickItem* videoItem = rootObject->findChild<QQuickItem*>("videoItem");
-    Q_ASSERT(videoItem != nullptr);
-
-    if (decode) {
-        rootObject->scheduleRenderJob(new StartDecoding(receiver, videoItem), QQuickWindow::BeforeSynchronizingStage);
-
-        if (stopDecodingAfter > 0) {
-            QTimer::singleShot(stopDecodingAfter * 1000, [receiver](){
-                receiver->stopDecoding();
-            });
-        }
+    if (isQtApp(argv[0])) {
+        QGuiApplication app(argc, argv);
+        VideoReceiverApp videoApp(app, true);
+        return videoApp.exec();
+    } else {
+        QCoreApplication app(argc, argv);
+        VideoReceiverApp videoApp(app, false);
+        return videoApp.exec();
     }
-
-    if (record) {
-        receiver->startRecording(videoFile, static_cast<VideoReceiver::FILE_FORMAT>(fileFormat));
-
-        if (stopRecordingAfter > 0) {
-            QTimer::singleShot(stopRecordingAfter * 1000, [receiver](){
-                receiver->stopRecording();
-            });
-        }
-    }
-
-    return app.exec();
 }

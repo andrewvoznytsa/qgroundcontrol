@@ -35,6 +35,8 @@ static void qt_gst_log(GstDebugCategory * category,
                        GstDebugMessage  * message,
                        gpointer           data)
 {
+    Q_UNUSED(data);
+
     if (level > gst_debug_category_get_threshold(category)) {
         return;
     }

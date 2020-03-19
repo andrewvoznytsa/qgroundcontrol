@@ -142,4 +142,12 @@ else()
     add_executable(VideoReceiverApp ${VIDEORECIVERAPP_SOURCES} ${VIDEORECIVERAPP_RESOURCES})
 endif()
 
-target_link_libraries(VideoReceiverApp PRIVATE VideoReceiver)
+target_link_libraries(VideoReceiverApp
+    PRIVATE
+        VideoReceiver
+        Qt5::Core
+        Qt5::Multimedia
+        Qt5::OpenGL
+        Qt5::Quick
+        Qt5::QuickWidgets
+)

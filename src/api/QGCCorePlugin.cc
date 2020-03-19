@@ -440,20 +440,20 @@ VideoManager* QGCCorePlugin::createVideoManager(QGCApplication *app, QGCToolbox 
     return new VideoManager(app, toolbox);
 }
 
-VideoReceiver* QGCCorePlugin::createVideoReceiver()
+VideoReceiver* QGCCorePlugin::createVideoReceiver(QObject* parent)
 {
 #if defined(QGC_GST_STREAMING)
-    return new VideoReceiver();
+    return new VideoReceiver(parent);
 #else
     Q_UNUSED(parent);
     return nullptr;
 #endif
 }
 
-VideoSink* QGCCorePlugin::createVideoSink(QQuickItem* widget)
+VideoSink* QGCCorePlugin::createVideoSink(QObject* parent, QQuickItem* widget)
 {
 #if defined(QGC_GST_STREAMING)
-    return new VideoSink(widget);
+    return new VideoSink(parent, widget);
 #else
     Q_UNUSED(widget);
     return nullptr;

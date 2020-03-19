@@ -97,8 +97,8 @@ VideoManager::setToolbox(QGCToolbox *toolbox)
     emit isGStreamerChanged();
     qCDebug(VideoManagerLog) << "New Video Source:" << videoSource;
 #if defined(QGC_GST_STREAMING)
-    _videoReceiver = toolbox->corePlugin()->createVideoReceiver();
-    _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver();
+    _videoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
+    _thermalVideoReceiver = toolbox->corePlugin()->createVideoReceiver(this);
 
     connect(_videoReceiver, &VideoReceiver::timeout, this, &VideoManager::_restartVideo);
     connect(_videoReceiver, &VideoReceiver::streamingChanged, this, &VideoManager::_streamingChanged);
@@ -181,14 +181,14 @@ VideoManager::startVideo()
     if(_videoReceiver != nullptr) {
         _videoReceiver->start(_videoUri, timeout);
         if (_videoSink != nullptr) {
-            _videoReceiver->startDecoding(_videoSink->opaque());
+            _videoReceiver->startDecoding(_videoSink);
         }
     }
 
     if(_thermalVideoReceiver != nullptr) {
         _thermalVideoReceiver->start(_thermalVideoUri, timeout);
         if (_thermalVideoSink != nullptr) {
-            _thermalVideoReceiver->startDecoding(_thermalVideoSink->opaque());
+            _thermalVideoReceiver->startDecoding(_thermalVideoSink);
         }
     }
 #endif
@@ -481,7 +481,7 @@ VideoManager::_initVideo()
     QQuickItem* widget = root->findChild<QQuickItem*>("videoContent");
 
     if (widget != nullptr && _videoReceiver != nullptr) {
-        if ((_videoSink = qgcApp()->toolbox()->corePlugin()->createVideoSink(widget)) != nullptr) {
+        if ((_videoSink = qgcApp()->toolbox()->corePlugin()->createVideoSink(this, widget)) != nullptr) {
             _videoReceiver->startDecoding(_videoSink);
         } else {
             qCDebug(VideoManagerLog) << "createVideoSink() failed";
@@ -493,7 +493,7 @@ VideoManager::_initVideo()
     widget = root->findChild<QQuickItem*>("thermalVideo");
 
     if (widget != nullptr && _thermalVideoReceiver != nullptr) {
-        if ((_thermalVideoSink = qgcApp()->toolbox()->corePlugin()->createVideoSink(widget)) != nullptr) {
+        if ((_thermalVideoSink = qgcApp()->toolbox()->corePlugin()->createVideoSink(this, widget)) != nullptr) {
             _thermalVideoReceiver->startDecoding(_thermalVideoSink);
         } else {
             qCDebug(VideoManagerLog) << "createVideoSink() failed";
