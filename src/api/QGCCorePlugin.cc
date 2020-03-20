@@ -453,7 +453,12 @@ VideoReceiver* QGCCorePlugin::createVideoReceiver(QObject* parent)
 VideoSink* QGCCorePlugin::createVideoSink(QObject* parent, QQuickItem* widget)
 {
 #if defined(QGC_GST_STREAMING)
-    return new VideoSink(parent, widget);
+    void* opaque;
+    if ((opaque = ::createVideoSink(widget)) != nullptr) {
+        return new VideoSink(parent, opaque);
+    } else {
+        return nullptr;
+    }
 #else
     Q_UNUSED(widget);
     return nullptr;
