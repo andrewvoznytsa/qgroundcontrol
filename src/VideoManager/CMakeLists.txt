@@ -1,9 +1,3 @@
-set(EXTRA_LIBRARIES)
-
-if (GST_FOUND)
-    set(EXTRA_LIBRARIES VideoReceiver)
-endif()
-
 add_library(VideoManager
     GLVideoItemStub.cc
     GLVideoItemStub.h
@@ -18,7 +12,7 @@ target_link_libraries(VideoManager
         qgc
         Qt5::Multimedia
         Qt5::OpenGL
-        ${EXTRA_LIBRARIES}
+        VideoReceiver
 )
 
 target_include_directories(VideoManager INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -15,14 +15,9 @@
  */
 
 #include <QDebug>
-
-#include "VideoReceiver.h"
-
-#include <gst/gst.h>
-
-#include "QGCLoggingCategory.h"
-
 #include <QQuickItem>
+
+#include "GstVideoReceiver.h"
 
 QGC_LOGGING_CATEGORY(GstreamerLog, "GstreamerLog")
 
@@ -110,7 +105,7 @@ static void qgcputenv(const QString& key, const QString& root, const QString& pa
 }
 #endif
 
-void initializeVideoReceiver(int argc, char* argv[], int debuglevel)
+void initializeGstreamer(int argc, char* argv[], int debuglevel)
 {
 #ifdef Q_OS_MAC
     #ifdef QGC_INSTALL_RELEASE
@@ -143,7 +138,7 @@ void initializeVideoReceiver(int argc, char* argv[], int debuglevel)
 
     GError* error = nullptr;
     if (!gst_init_check(&argc, &argv, &error)) {
-        qCCritical(VideoReceiverLog) << "gst_init_check() failed: " << error->message;
+        qCCritical(GstreamerLog) << "gst_init_check() failed: " << error->message;
         g_error_free(error);
     }
 
@@ -190,13 +185,13 @@ void initializeVideoReceiver(int argc, char* argv[], int debuglevel)
         gst_object_unref(sink);
         sink = nullptr;
     } else {
-        qCCritical(VideoReceiverLog) << "unable to find qmlglsink - you need to build it yourself and add to GST_PLUGIN_PATH";
+        qCCritical(GstreamerLog) << "unable to find qmlglsink - you need to build it yourself and add to GST_PLUGIN_PATH";
     }
 
     GST_PLUGIN_STATIC_REGISTER(qgc);
 }
 
-void* createVideoSink(void* widget)
+void* createVideoSink(QObject* parent, QQuickItem* widget)
 {
     GstElement* sink;
 
@@ -207,4 +202,16 @@ void* createVideoSink(void* widget)
     }
 
     return sink;
+}
+
+void releaseVideoSink(void* sink)
+{
+    if (sink != nullptr) {
+        gst_object_unref(GST_ELEMENT(sink));
+    }
+}
+
+VideoReceiver* createVideoReceiver(QObject* parent)
+{
+    return new GstVideoReceiver(nullptr);
 }

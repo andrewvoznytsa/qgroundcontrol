@@ -5,6 +5,13 @@
 #include <QQuickItem>
 #include <QRunnable>
 #include <QCommandLineParser>
+#include <QTimer>
+
+#include <gst/gst.h>
+
+#include "QGCLoggingCategory.h"
+
+QGC_LOGGING_CATEGORY(AppLog, "VideoReceiverApp")
 
 #if defined(__android__)
 #include <QtAndroidExtras>
@@ -111,8 +118,6 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved)
 
 #include <VideoReceiver.h>
 
-QGC_LOGGING_CATEGORY(AppLog, "VideoReceiverApp")
-
 class VideoReceiverApp : public QRunnable
 {
 public:
@@ -138,7 +143,7 @@ private:
     VideoReceiver* _receiver = nullptr;
     QQuickWindow* _window = nullptr;
     QQuickItem* _widget = nullptr;
-    VideoSink* _videoSink = nullptr;
+    void* _videoSink = nullptr;
     QString _url;
     unsigned _timeout = 5;
     unsigned _connect = 1;
@@ -154,14 +159,10 @@ private:
 void
 VideoReceiverApp::run()
 {
-    void* opaque;
-
-    if((opaque = createVideoSink(static_cast<gpointer>(_widget))) == nullptr) {
+    if((_videoSink = createVideoSink(nullptr, _widget)) == nullptr) {
         qCDebug(AppLog) << "createVideoSink failed";
         return;
     }
-
-    _videoSink = new VideoSink(opaque);
 
     _receiver->startDecoding(_videoSink);
 }
@@ -278,10 +279,10 @@ VideoReceiverApp::exec()
     }
 
     if (parser.isSet(videoSinkOption)) {
-        _useFakeSink = parser.value(stopRecordingOption).toUInt() > 0;
+        _useFakeSink = parser.value(videoSinkOption).toUInt() > 0;
     }
 
-    _receiver = new VideoReceiver();
+    _receiver = createVideoReceiver(nullptr);
 
     QQmlApplicationEngine engine;
 
@@ -390,14 +391,10 @@ VideoReceiverApp::startDecoding()
         _window->scheduleRenderJob(this, QQuickWindow::BeforeSynchronizingStage);
     } else {
         if (_videoSink == nullptr) {
-            void* opaque;
-
-            if ((opaque = gst_element_factory_make(_useFakeSink ? "fakesink" : "autovideosink", nullptr)) == nullptr) {
+            if ((_videoSink = gst_element_factory_make(_useFakeSink ? "fakesink" : "autovideosink", nullptr)) == nullptr) {
                 qCDebug(AppLog) << "Failed to create video sink";
                 return;
             }
-
-            _videoSink = new VideoSink(opaque);
         }
 
         _receiver->startDecoding(_videoSink);
@@ -467,7 +464,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    initializeVideoReceiver(argc, argv, 3);
+    initializeGstreamer(argc, argv, 3);
 
     if (isQtApp(argv[0])) {
         QGuiApplication app(argc, argv);

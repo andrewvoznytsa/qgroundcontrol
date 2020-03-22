@@ -1335,8 +1335,13 @@ contains (CONFIG, DISABLE_VIDEOSTREAMING) {
 }
 
 !VideoEnabled {
+    INCLUDEPATH += \
+        src/VideoReceiver
+
     HEADERS += \
-        src/VideoManager/GLVideoItemStub.h
+        src/VideoManager/GLVideoItemStub.h \
+        src/VideoReceiver/VideoReceiver.h
+
     SOURCES += \
         src/VideoManager/GLVideoItemStub.cc
 }

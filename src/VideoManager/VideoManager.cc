@@ -28,17 +28,19 @@
 #include "Vehicle.h"
 #include "QGCCameraManager.h"
 
-#if defined(QGC_GST_STREAMING)
+#if !defined(QGC_GST_STREAMING)
 #include "GLVideoItemStub.h"
 #endif
 
 QGC_LOGGING_CATEGORY(VideoManagerLog, "VideoManagerLog")
 
+#if defined(QGC_GST_STREAMING)
 static const char* kFileExtension[VideoReceiver::FILE_FORMAT_MAX - VideoReceiver::FILE_FORMAT_MIN] = {
     "mkv",
     "mov",
     "mp4"
 };
+#endif
 
 //-----------------------------------------------------------------------------
 VideoManager::VideoManager(QGCApplication* app, QGCToolbox* toolbox)
@@ -56,14 +58,14 @@ VideoManager::VideoManager(QGCApplication* app, QGCToolbox* toolbox)
 //-----------------------------------------------------------------------------
 VideoManager::~VideoManager()
 {
-#if defined(QGC_GST_STREAMING)
     delete _videoReceiver;
     _videoReceiver = nullptr;
     delete _thermalVideoReceiver;
     _thermalVideoReceiver = nullptr;
-    delete _thermalVideoSink;
+#if defined(QGC_GST_STREAMING)
+    releaseVideoSink(_thermalVideoSink);
     _thermalVideoSink = nullptr;
-    delete _videoSink;
+    releaseVideoSink(_videoSink);
     _videoSink = nullptr;
 #endif
 }
@@ -153,7 +155,7 @@ void VideoManager::_cleanupOldVideos()
         //-- Remove old movies until max size is satisfied.
         while(total >= maxSize && !vidList.isEmpty()) {
             total -= vidList.last().size();
-            qCDebug(VideoReceiverLog) << "Removing old video file:" << vidList.last().filePath();
+            qCDebug(VideoManagerLog) << "Removing old video file:" << vidList.last().filePath();
             QFile file (vidList.last().filePath());
             file.remove();
             vidList.removeLast();
@@ -171,7 +173,7 @@ VideoManager::startVideo()
     }
 
     if(!_videoSettings->streamEnabled()->rawValue().toBool() || !_videoSettings->streamConfigured()) {
-        qCDebug(VideoReceiverLog) << "Stream not enabled/configured";
+        qCDebug(VideoManagerLog) << "Stream not enabled/configured";
         return;
     }
 
@@ -241,6 +243,8 @@ VideoManager::startRecording(const QString& videoFile)
             + "." + kFileExtension[fileFormat - VideoReceiver::FILE_FORMAT_MIN];
 
     _videoReceiver->startRecording(_videoFile, fileFormat);
+#else
+    Q_UNUSED(videoFile)
 #endif
 }
 
@@ -275,6 +279,8 @@ VideoManager::grabImage(const QString& imageFile)
     emit imageFileChanged();
 
     _videoReceiver->takeScreenshot(_imageFile);
+#else
+    Q_UNUSED(imageFile)
 #endif
 }
 

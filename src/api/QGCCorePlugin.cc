@@ -443,24 +443,20 @@ VideoManager* QGCCorePlugin::createVideoManager(QGCApplication *app, QGCToolbox 
 VideoReceiver* QGCCorePlugin::createVideoReceiver(QObject* parent)
 {
 #if defined(QGC_GST_STREAMING)
-    return new VideoReceiver(parent);
+    return ::createVideoReceiver(parent);
 #else
-    Q_UNUSED(parent);
+    Q_UNUSED(parent)
     return nullptr;
 #endif
 }
 
-VideoSink* QGCCorePlugin::createVideoSink(QObject* parent, QQuickItem* widget)
+void* QGCCorePlugin::createVideoSink(QObject* parent, QQuickItem* widget)
 {
 #if defined(QGC_GST_STREAMING)
-    void* opaque;
-    if ((opaque = ::createVideoSink(widget)) != nullptr) {
-        return new VideoSink(parent, opaque);
-    } else {
-        return nullptr;
-    }
+    return ::createVideoSink(parent, widget);
 #else
-    Q_UNUSED(widget);
+    Q_UNUSED(parent)
+    Q_UNUSED(widget)
     return nullptr;
 #endif
 }

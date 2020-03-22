@@ -18,9 +18,7 @@
 
 #include "QGCMAVLink.h"
 #include "QGCLoggingCategory.h"
-#if defined(QGC_GST_STREAMING)
 #include "VideoReceiver.h"
-#endif
 #include "QGCToolbox.h"
 #include "SubtitleWriter.h"
 
@@ -133,10 +131,8 @@ protected:
     bool            _isTaisync              = false;
     VideoReceiver*  _videoReceiver          = nullptr;
     VideoReceiver*  _thermalVideoReceiver   = nullptr;
-#if defined(QGC_GST_STREAMING)
-    VideoSink*      _videoSink              = nullptr;
-    VideoSink*      _thermalVideoSink       = nullptr;
-#endif
+    void*           _videoSink              = nullptr;
+    void*           _thermalVideoSink       = nullptr;
     VideoSettings*  _videoSettings          = nullptr;
     QString         _videoUri;
     QString         _thermalVideoUri;

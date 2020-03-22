@@ -131,13 +131,14 @@ VideoEnabled {
     }
 
     HEADERS += \
+        $$PWD/GstVideoReceiver.h \
         $$PWD/VideoReceiver.h
 
     SOURCES += \
         $$PWD/gstqgcvideosinkbin.c \
         $$PWD/gstqgc.c \
         $$PWD/GStreamer.cc \
-        $$PWD/VideoReceiver.cc
+        $$PWD/GstVideoReceiver.cc
 
     include($$PWD/../../qmlglsink.pri)
 } else {

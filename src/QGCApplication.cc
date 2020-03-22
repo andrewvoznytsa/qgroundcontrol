@@ -323,8 +323,13 @@ QGCApplication::QGCApplication(int &argc, char* argv[], bool unitTesting)
     if (settings.contains(AppSettings::gstDebugLevelName)) {
         gstDebugLevel = settings.value(AppSettings::gstDebugLevelName).toInt();
     }
+
+#if defined(QGC_GST_STREAMING)
     // Initialize Video Receiver
-    initializeVideoReceiver(argc, argv, gstDebugLevel);
+    initializeGstreamer(argc, argv, gstDebugLevel);
+#else
+    Q_UNUSED(gstDebugLevel)
+#endif
 
     _toolbox = new QGCToolbox(this);
     _toolbox->setChildToolboxes();
